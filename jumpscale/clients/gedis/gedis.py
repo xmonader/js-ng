@@ -53,16 +53,25 @@ class ActorsCollection:
         """
         self._gedis_client = gedis_client
         self._actors = {}
+        self._load_all_actors()
+
+    def __dir__(self):
+        return list(self._actors.keys())
+
+    def __getattr__(self, actor_name):
+        if actor_name in self._actors:
+            return self._actors[actor_name]
 
     @property
     def actors_names(self):
-        # TODO: CHECK IF WE SHOULD USE CACHE HERE?
-        return json.loads(self._gedis_client.execute("system", "list_actors"))
-
-    def __dir__(self):
-        return self.actors_names
+        return self._gedis_client.execute("system", "list_actors")
 
     def _load_actor(self, actor_name):
+        if actor_name in self.actors_names:
+            actor_info = self._gedis_client.execute(actor_name, "info")
+            self._actors[actor_name] = ActorProxy(actor_name, actor_info, self._gedis_client)
+
+    def _load_all_actors(self):
         """Load actor: creating ActorProxy for remote actor `actor_name` and store it in the collection.
 
         Arguments:
@@ -71,15 +80,9 @@ class ActorsCollection:
         Returns:
             ActorProxy -- ActorProxy that can call the remote actor.
         """
-        actor_info = json.loads(self._gedis_client.execute(actor_name, "info"))
-        self._actors[actor_name] = ActorProxy(actor_name, actor_info, self._gedis_client)
-        return self._actors[actor_name]
-
-    def __getattr__(self, actor_name):
-        if actor_name not in self._actors:
-            return self._load_actor(actor_name)
-        else:
-            return self._actors[actor_name]
+        for actor_name in self.actors_names:
+            actor_info = self._gedis_client.execute(actor_name, "info")
+            self._actors[actor_name] = ActorProxy(actor_name, actor_info, self._gedis_client)
 
 
 class GedisClient(Client):
@@ -114,7 +117,9 @@ class GedisClient(Client):
             actor_path {str} -- actor path on the remote gedis server
 
         """
-        return self.execute("system", "register_actor", actor_name, actor_path)
+        response = self.execute("system", "register_actor", actor_name, actor_path)
+        if response:
+            self.actors._load_actor(actor_name)
 
     def execute(self, actor_name: str, actor_method: str, *args):
         """Execute
@@ -125,7 +130,13 @@ class GedisClient(Client):
             *args      {List[object]}  -- *args of parameters
 
         """
-        return self._redisclient.execute_command(actor_name, actor_method, *args)
+        response = self._redisclient.execute_command(actor_name, actor_method, *args)
+        response_json = json.loads(response.decode())
+
+        if response_json["success"]:
+           return response_json["result"]
+        
+        raise RemoteException(response_json["error"])
 
     def doc(self, actor_name: str):
         """Gets the documentation of actor `actor_name`
@@ -134,7 +145,7 @@ class GedisClient(Client):
             actor_name {str} -- actor to retrieve its documentation
 
         """
-        return json.loads(self.execute(actor_name, "info"))
+        return self.execute(actor_name, "info")
 
     def ppdoc(self, actor_name):
         """Pretty print documentation of actor
@@ -142,8 +153,8 @@ class GedisClient(Client):
         Arguments:
             actor_name {str} -- actor to print its documentation.
         """
-        res = self.doc(actor_name)
-        print(json.dumps(res, indent=2, sort_keys=True))
+        docs = self.doc(actor_name)
+        print(json.dumps(docs, indent=2, sort_keys=True))
 
     def list_actors(self) -> List[str]:
         """List actors
@@ -151,4 +162,11 @@ class GedisClient(Client):
         Returns:
             List[str] -- list of actors available on gedis server.
         """
-        return json.loads(self.execute("system", "list_actors"))
+        return self.execute("system", "list_actors")
+
+    def reload(self):
+        self.actors._load_all_actors()
+
+
+class RemoteException(Exception):
+    pass

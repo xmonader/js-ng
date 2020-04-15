@@ -11,4 +11,4 @@ class BaseActor:
                 result[name]["args"] = [arg for arg in attr.__func__.__code__.co_varnames if arg != "self"]
                 result[name]["doc"] = attr.__doc__ or ""
 
-        return json.dumps(result)
+        return result

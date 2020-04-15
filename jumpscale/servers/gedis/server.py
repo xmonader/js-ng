@@ -1,14 +1,18 @@
 import sys
 from io import BytesIO
+import traceback
+import json
 from functools import partial
 import gevent
 from gevent import time
 from gevent.pool import Pool
 from gevent.server import StreamServer
-import signal
+from signal import SIGTERM, SIGTERM, SIGKILL
 from redis.connection import DefaultParser, Encoder
+from redis.exceptions import ConnectionError
 from jumpscale.god import j
 from .systemactor import SystemActor
+from jumpscale.core.base import Base, fields
 
 
 class RedisConnectionAdapter:
@@ -92,37 +96,46 @@ class ResponseEncoder:
         self.buffer = BytesIO()  # seems faster then truncating
 
 
-class GedisServer:
-    def __init__(self, endpoint=("127.0.0.1", 16000), actors=None):
-        """Create gedis server
+class GedisServer(Base):
+    host = fields.String(default="127.0.0.1")
+    port = fields.Integer(default=16000)
+    _actors = fields.Typed(dict, default={})
 
-        Keyword Arguments:
-            endpoint {tuple[host, port]} -- host and port to bind server on (default: {("127.0.0.1", 16000)})
-            actors {dict[str, Actor]} -- doct of available actors (default: {None})
-        """
-        self.actors = actors or {}
-        self.endpoint = endpoint
+    def __init__(self):
+        super().__init__()
+        self._actors["system"] = SystemActor(self)
+        self._server = StreamServer((self.host, self.port), self._on_connection)
+        self._server.reuse_addr = True
+
+    @property
+    def actors(self):
+        return list(self._actors.keys())
+
+    def actor_add(self, name, path):
+        if name == "system":
+            raise j.exceptions.Value("invalid")
+
+        self._actors[name] = path
+
+    def actor_delete(self, name):
+        if name == "system":
+            raise j.exceptions.Value("invalid")
+
+        if isinstance(name, bytes):
+            name = name.decode()
+        del self._actors[name]
 
     def start(self):
-        """Start gedis server.
-        """
-        s = StreamServer(self.endpoint, self.on_connection)
+        for signal_type in (SIGTERM, SIGTERM, SIGKILL):
+            gevent.signal(signal_type, self.stop)
 
-        gevent.signal(signal.SIGTERM, s.stop)
-        gevent.signal(signal.SIGINT, s.stop)
-        s.reuse_addr = True
-        s.serve_forever()
+        self._server.serve_forever()
 
     def stop(self):
-        """Shutting down the server.
-        """
-        if self.closed:
-            sys.exit("Multiple exit signals received - aborting.")
-        else:
-            j.logger.debug("Closing listener socket")
-            StreamServer.close(self)
+        j.logger.info("Shutting down ...")
+        self._server.stop()
 
-    def on_connection(self, socket, address):
+    def _on_connection(self, socket, address):
         """Handling new connection
 
         Arguments:
@@ -130,52 +143,51 @@ class GedisServer:
             address {tuple[str, port]} -- connection address
         """
 
-        print("New connection from {}".format(address))
+        j.logger.info("New connection from {}", address)
+
         parser = DefaultParser(65536)
         conn = RedisConnectionAdapter(socket)
         encoder = ResponseEncoder(socket)
         parser.on_connect(conn)
-        try:
-            while True:
-                resp = parser.read_response()
-                print(resp)
-                if len(resp) > 1:
-                    actor_name = resp[0].decode()
-                    method_name = resp[1].decode()
-                    args = resp[2:]
-                    print("SERVICE: {} METHOD: {} ARGS : {} ".format(actor_name, method_name, args))
+
+        while True:
+            try:
+                response = parser.read_response()
+                output = dict(success=True, error=None, result=None)
+
+                if len(response) > 1:
+                    actor_name = response[0].decode()
+                    method_name = response[1].decode()
+                    args = response[2:]
+
                     if actor_name not in self.actors:
-                        encoder.encode("actor {} isn't loaded".format(actor_name))
+                        output["success"] = False
+                        output["error"] = "Actor not loaded"
                     else:
-                        actor = self.actors[actor_name]
-                        m = getattr(actor, method_name)
-                        res = None
-                        res = m(*args)
-                        print("RES: ", res)
-                        encoder.encode(res)
-        except Exception as e:
-            # import traceback
-            # exc_info = sys.exc_info()
-            # traceback.print_exception(*exc_info)
-            print(e)
 
+                        j.logger.info("Executing method {} from actor {} to client {}", method_name, actor_name, address)
+                        
+                        actor = self._actors[actor_name]
+                        method = getattr(actor, method_name)
+                        try:
+                            result = method(*args)
+                            
+                            if isinstance(result, bytes):
+                                result = result.decode()
+
+                            output["result"] = result
+
+                        except Exception as err:
+                            output["success"] = False
+                            output["error"] = str(err)
+
+            except ConnectionError:
+                j.logger.info("Client {} closed the connection", address)
+                    
+            except Exception as err:
+                output["success"] = False
+                output["error"] = "internal error: %s" % str(err)
+                j.logger.error(str(err))
+            
+            encoder.encode(json.dumps(output))
         parser.on_disconnect()
-
-
-def new_server(actors=None):
-    """Launch new gedis server windeth actors `actor`
-
-    server will have `SystemActor` enabled under name `system` to allow registration of other actors.
-
-    Keyword Arguments:
-        actors {dict[str, Actor]} -- dict of actor name -> actor object. (default: {None})
-    """
-    actors = actors or {}
-    if not actors:
-        print("empty actors on the gedis server.")
-
-    s = GedisServer()
-    default_actors = {"system": SystemActor(s)}
-    s.actors = {**s.actors, **default_actors}
-    s.start()
-    gevent.wait()

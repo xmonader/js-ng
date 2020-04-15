@@ -1,5 +1,5 @@
 from jumpscale.servers.gedis.baseactor import BaseActor
-
+import time
 
 class Greeter(BaseActor):
     def hi(self):
@@ -15,10 +15,8 @@ class Greeter(BaseActor):
 
     def add2(self, a, b):
         """Add two args
-        
         """
-        print("A {} B {} ".format(a, b))
-        return a + b
+        return int(a) + int(b)
 
 
 Actor = Greeter

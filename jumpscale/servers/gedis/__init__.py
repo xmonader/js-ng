@@ -27,5 +27,7 @@ pong no?
 ```
 """
 
+from jumpscale.core.base import StoredFactory
+from .server import GedisServer
 
-from .server import *
+export_module_as = StoredFactory(GedisServer)
