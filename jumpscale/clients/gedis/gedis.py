@@ -1,9 +1,26 @@
 from jumpscale.clients.base import Client
 from jumpscale.core.base import fields
 from jumpscale.god import j
-from functools import partial
+from functools import update_wrapper, partial
 import json
 from typing import List
+import codecs
+import pickle
+
+
+types = {
+    "int": int,
+    "str": str,
+    "float": float,
+    "bool": bool,
+    "set": set,
+    "bytes": bytes,
+    "complex": complex,
+    "list": list,
+    "dict": dict,
+    "tuple": tuple,
+    "callable": callable,
+}
 
 
 class ActorProxy:
@@ -18,6 +35,60 @@ class ActorProxy:
         self.actor_name = actor_name
         self.actor_info = actor_info
         self._gedis_client = gedis_client
+
+    def _map_inputs(self, actor_name, method_name, *args, **kwargs):
+        signature_blob = self.actor_info[method_name]["signature"]
+
+        signature = pickle.loads(codecs.decode(signature_blob, "hex"))
+        binded = signature.bind(*args, **kwargs)
+
+        # import ipdb; ipdb.set_trace()
+
+
+
+        return binded.args, binded.kwargs
+
+        
+        # new_args = []
+        # new_kwargs = {}
+        
+        # for arg in func_spec["args"]:
+        #     argname, argtype = arg
+
+            
+
+
+
+
+
+        # if not len(args) + len(kwargs) == len(func_args):
+        #     raise j.exceptions.Value(
+        #         f"invalid number of arguments, expected {len(func_args)} but got {len(args)}"
+        #     )
+
+        # if kwargs:
+        #     func_args_names = [x[0] for x in func_args]
+        #     for key in kwargs.keys():
+        #         if key not in func_args_names:
+        #             raise j.exceptions.Value(f"got an unexpected keyword argument {key}")
+
+        # if not len(args) + len(kwargs) == len(func_args):
+        #     raise j.exceptions.Value(
+        #         f"invalid number of arguments, expected {len(func_args)} but got {len(args)}"
+        #     )
+
+        # for i, arg in enumerate(args):
+        #     arg_type = type(arg).__name__
+        #     func_arg_name, func_arg_type = func_args[i]
+
+        #     if func_arg_type and func_arg_type != arg_type:
+        #         validation_errors.append(
+        #             f"argument {func_arg_name} is supposed to be {func_arg_type}, but got {arg_type}"
+        #         )
+        
+        # if validation_errors:
+        #     raise j.exceptions.Value('\n'.join(validation_errors))
+
 
     def __dir__(self):
         """Delegate the available functions on the ActorProxy to `actor_info` keys
@@ -37,11 +108,13 @@ class ActorProxy:
             function -- function waiting on the arguments
         """
 
-        def mkfun(actor_name, fn_name, *args):
-            return self._gedis_client.execute(self.actor_name, fn_name, *args)
+        def mkfun(actor_name, fn_name, *args, **kwargs):
+            payload = {"args": args, "kwargs": kwargs}
+            return self._gedis_client.execute(actor_name, fn_name, json.dumps(payload, default=lambda o: o.to_dict()))
 
-        mkfun.__doc__ = self.actor_info[attr]["doc"]
-        return partial(mkfun, self.actor_name, attr)
+        func = partial(mkfun, self.actor_name, attr)
+        func.__doc__ = self.actor_info[attr]["doc"]
+        return func
 
 
 class ActorsCollection:
@@ -122,9 +195,10 @@ class GedisClient(Client):
         response_json = json.loads(response.decode())
 
         if response_json["success"]:
-           return response_json["result"]
+            return response_json["result"]
         
-        raise RemoteException(response_json["error"])
+        print(response_json["error"])
+        # raise RemoteException(response_json["error"])
 
     def doc(self, actor_name: str):
         """Gets the documentation of actor `actor_name`

@@ -1,6 +1,6 @@
 import sys
 from io import BytesIO
-import traceback
+import better_exceptions
 import json
 from functools import partial
 import gevent
@@ -183,33 +183,33 @@ class GedisServer(Base):
     def _unregister_actor(self, actor_name: str):
         self._loaded_actors.pop(actor_name, None)
 
-    def _exceute(self, actor_name, method_name, args):
+    def _validate_method_arguments(self, method, args, kwargs):
+        signature = inspect.signature(method)
+        bound_arguments = signature.bind(*args, **kwargs)
+        for name, value in bound_arguments.arguments.items():
+            annotation = signature.parameters[name].annotation
+            if hasattr(annotation, "from_dict") and isinstance(value, dict):
+                obj = annotation(); obj.from_dict(value)
+                bound_arguments.arguments[name] = obj
+
+            if not isinstance(bound_arguments.arguments[name], annotation):
+                raise TypeError(f"argument {name} supposed to be of type {annotation.__name__}, but found {type(value).__name__}")
+        
+        return bound_arguments.args, bound_arguments.kwargs
+
+    def _exceute(self, actor_name, method_name, args, kwargs):
         result = error = None
         actor = self._loaded_actors[actor_name]
         method = getattr(actor, method_name)
         try:
-            specs = inspect.getfullargspec(method)
-            specs.annotations.pop("return", None)
-            annotations = list(specs.annotations.values())
-
-            casted = []
-            for i, arg in enumerate(args):
-                if isinstance(arg, bytes):
-                    arg = arg.decode()
-
-                if not annotations:
-                    raise j.exceptions.Runtime("argument {} in method {} doesn't have type annotation".format(specs.args[i], method_name))
-                
-                arg_type = annotations.pop(0)
-                casted.append(arg_type(arg))
-
-            result = method(*casted)
+            args, kwargs = self._validate_method_arguments(method, args, kwargs)
+            result = method(*args, **kwargs)
 
             if isinstance(result, bytes):
                 result = result.decode()
 
         except Exception:
-            error = traceback.format_exc()
+            error = better_exceptions.format_exception(* sys.exc_info())
 
         return result, error
 
@@ -220,15 +220,25 @@ class GedisServer(Base):
         try:
             encoder = ResponseEncoder(socket)
             parser.on_connect(connection)
+
             while True:
                 try:
                     response = parser.read_response()
                     output = dict(success=True, error=None, result=None)
+                    args = kwargs = None
 
-                    if len(response) > 1:
+                    if len(response) < 2:
+                        output["error"] = "Invalid request"
+                    else:
                         actor_name = response.pop(0).decode()
                         method_name = response.pop(0).decode()
-                        args = response
+
+                        if response:
+                            payload = json.loads(response.pop(0).decode())
+                            args, kwargs = payload["args"], payload["kwargs"]
+         
+                        args = args or ()
+                        kwargs = kwargs or {}
 
                         if actor_name not in self._loaded_actors:
                             output["error"] = "Actor not loaded"
@@ -236,9 +246,7 @@ class GedisServer(Base):
                             j.logger.info(
                                 "Executing method {} from actor {} to client {}", method_name, actor_name, address
                             )
-                            output["result"], output["error"] = self._exceute(actor_name, method_name, args)
-                    else:
-                        output["error"] = "Invalid request"
+                            output["result"], output["error"] = self._exceute(actor_name, method_name, args, kwargs)
 
                 except ConnectionError:
                     j.logger.info("Client {} closed the connection", address)
