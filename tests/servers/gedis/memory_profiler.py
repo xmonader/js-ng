@@ -4,12 +4,23 @@ from objgraph import count, show_most_common_types
 
 class MemoryProfiler(BaseActor):
 
-    def object_count(self, name):
-        """returns number of instances in memory
+    def object_count(self, object_type: str) -> int:
+        """Gets number of object with type object_type in memory
+        
+        Arguments:
+            object_type {str} -- object type
+        
+        Returns:
+            int -- [description]
         """
-        return count(name.decode())
+        return count(object_type)
     
-    def print_top_types(self, limit):
+    def print_top_types(self, limit: int):
+        """Print top x object in memory
+        
+        Arguments:
+            limit {int} -- max number of results
+        """
         show_most_common_types(limit=int(limit))
 
 

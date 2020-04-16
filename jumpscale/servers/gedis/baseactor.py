@@ -1,8 +1,9 @@
 import inspect
 import json
 
+
 class BaseActor:
-    def info(self):
+    def info(self) -> dict:
         result = {}
         members = inspect.getmembers(self)
         for name, attr in members:

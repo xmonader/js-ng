@@ -64,7 +64,7 @@ class ActorsCollection:
 
     @property
     def actors_names(self):
-        return self._gedis_client.execute("system", "list_actors")
+        return self._gedis_client.execute("core", "list_actors")
 
     def _load_actor(self, actor_name):
         if actor_name in self.actors_names:
@@ -109,18 +109,6 @@ class GedisClient(Client):
         self._redisclient.save()
         return self._redisclient
 
-    def register_actor(self, actor_name: str, actor_path: str):
-        """Register actor on the server side (gedis server)
-
-        Arguments:
-            actor_name {str} -- actor name to be used in the system
-            actor_path {str} -- actor path on the remote gedis server
-
-        """
-        response = self.execute("system", "register_actor", actor_name, actor_path)
-        if response:
-            self.actors._load_actor(actor_name)
-
     def execute(self, actor_name: str, actor_method: str, *args):
         """Execute
 
@@ -156,13 +144,28 @@ class GedisClient(Client):
         docs = self.doc(actor_name)
         print(json.dumps(docs, indent=2, sort_keys=True))
 
+    def register_actor(self, actor_name: str, actor_path: str):
+        """Register actor on the server side (gedis server)
+
+        Arguments:
+            actor_name {str} -- actor name to be used in the system
+            actor_path {str} -- actor path on the remote gedis server
+
+        """
+        if "system" not in self.actors.actors_names:
+            raise j.exceptions.NotImplemented("Gedis server doesn't support registering actors")
+
+        response = self.execute("system", "register_actor", actor_name, actor_path)
+        if response:
+            self.actors._load_actor(actor_name)
+
     def list_actors(self) -> List[str]:
         """List actors
 
         Returns:
             List[str] -- list of actors available on gedis server.
         """
-        return self.execute("system", "list_actors")
+        return self.execute("core", "list_actors")
 
     def reload(self):
         self.actors._load_all_actors()

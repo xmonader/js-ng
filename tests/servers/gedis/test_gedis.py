@@ -8,7 +8,7 @@ from jumpscale.god import j
 
 COUNT = 10000
 POOLS_COUNT = 100
-ACTOR_PATH = "/sandbox/code/github/js-next/js-ng/jumpscale/servers/gedis/example_greeter.py"
+ACTOR_PATH = "/sandbox/code/github/js-next/js-ng/jumpscale/servers/gedis/example_actor.py"
 
 
 class TestGedis(unittest.TestCase):
@@ -27,12 +27,12 @@ class TestGedis(unittest.TestCase):
 
         def execute(i):
             j.logger.info('executing actor no {}', i)
-            r = getattr(cl.actors, 'test_%s' % i).add2(1, 2)
+            r = getattr(cl.actors, 'test_%s' % i).add_two_ints(1, 2)
             self.assertEqual(int(r), 3)
 
         def unregister(i):
             j.logger.info('Unregister actor test_{}', i)
-            cl.actors.system.remove_actor('test_%s' % i)
+            cl.actors.system.unregister_actor('test_%s' % i)
         
         jobs = []
         for i in range(COUNT):
@@ -46,7 +46,7 @@ class TestGedis(unittest.TestCase):
 
         gevent.joinall(jobs)
 
-        self.assertEqual(cl.actors.memory.object_count('Greeter'), COUNT)
+        self.assertEqual(cl.actors.memory.object_count('Example'), COUNT)
 
         jobs = []
         for i in range(COUNT):
@@ -54,4 +54,4 @@ class TestGedis(unittest.TestCase):
 
         gevent.joinall(jobs)
 
-        self.assertEqual(cl.actors.memory.object_count('Greeter'), 0)
+        self.assertEqual(cl.actors.memory.object_count('Example'), 0)

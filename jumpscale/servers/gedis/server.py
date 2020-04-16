@@ -4,14 +4,16 @@ import traceback
 import json
 from functools import partial
 import gevent
+import inspect
 from gevent import time
 from gevent.pool import Pool
 from gevent.server import StreamServer
 from signal import SIGTERM, SIGTERM, SIGKILL
 from redis.connection import DefaultParser, Encoder
+from .baseactor import BaseActor
 from redis.exceptions import ConnectionError
 from jumpscale.god import j
-from .systemactor import SystemActor
+from .systemactor import CoreActor, SystemActor
 from jumpscale.core.base import Base, fields
 
 
@@ -96,98 +98,159 @@ class ResponseEncoder:
         self.buffer = BytesIO()  # seems faster then truncating
 
 
+RESERVED_ACTOR_NAMES = ("core", "system")
+
+
 class GedisServer(Base):
     host = fields.String(default="127.0.0.1")
     port = fields.Integer(default=16000)
+    enable_system_actor = fields.Boolean(default=True)
     _actors = fields.Typed(dict, default={})
 
     def __init__(self):
         super().__init__()
-        self._actors["system"] = SystemActor(self)
-        self._server = StreamServer((self.host, self.port), self._on_connection)
-        self._server.reuse_addr = True
+        self._core_actor = CoreActor(self)
+        self._system_actor = SystemActor(self)
+        self._loaded_actors = {"core": self._core_actor}
 
     @property
     def actors(self):
-        return list(self._actors.keys())
+        """Lists saved actors
+        
+        Returns:
+            list -- List of saved actors
+        """
+        return self._actors
 
-    def actor_add(self, name, path):
-        if name == "system":
-            raise j.exceptions.Value("invalid")
+    def actor_add(self, actor_name: str, actor_path: str):
+        """Adds an actor to the server
+        
+        Arguments:
+            actor_name {str} -- Actor name
+            actor_path {str} -- Actor absolute path
+        
+        Raises:
+            j.exceptions.Value: raises if actor name is matched one of the reserved actor names
+            j.exceptions.Value: raises if actor name is not a valid identifier
+        """
+        if actor_name in RESERVED_ACTOR_NAMES:
+            raise j.exceptions.Value("Actor name should be in {}".format(",".join(RESERVED_ACTOR_NAMES)))
 
-        self._actors[name] = path
+        if not actor_name.isidentifier():
+            raise j.exceptions.Value("Actor name should be a valid identifier")
 
-    def actor_delete(self, name):
-        if name == "system":
-            raise j.exceptions.Value("invalid")
+        self._actors[actor_name] = actor_path
 
-        if isinstance(name, bytes):
-            name = name.decode()
-        del self._actors[name]
+    def actor_delete(self, actor_name: str):
+        """Removes an actor from the server
+        
+        Arguments:
+            actor_name {str} -- Actor name
+        """
+        self._actors.pop(actor_name, None)
 
     def start(self):
+        """Starts the server
+        """
+        j.application.start("gedis")
+
+        # handle signals
         for signal_type in (SIGTERM, SIGTERM, SIGKILL):
             gevent.signal(signal_type, self.stop)
 
-        self._server.serve_forever()
+        # register system actor if enabled
+        if self.enable_system_actor:
+            self._register_actor("system", self._system_actor)
+
+        # register saved actors
+        for actor_name, actor_path in self._actors.items():
+            self._system_actor.register_actor(actor_name, actor_path)
+
+        # start the server
+        server = StreamServer((self.host, self.port), self._on_connection)
+        server.reuse_addr = True
+        server.serve_forever()
 
     def stop(self):
+        """Stops the server
+        """
         j.logger.info("Shutting down ...")
         self._server.stop()
 
+    def _register_actor(self, actor_name: str, actor_module: BaseActor):
+        self._loaded_actors[actor_name] = actor_module
+
+    def _unregister_actor(self, actor_name: str):
+        self._loaded_actors.pop(actor_name, None)
+
+    def _exceute(self, actor_name, method_name, args):
+        result = error = None
+        actor = self._loaded_actors[actor_name]
+        method = getattr(actor, method_name)
+        try:
+            specs = inspect.getfullargspec(method)
+            specs.annotations.pop("return", None)
+            annotations = list(specs.annotations.values())
+
+            casted = []
+            for i, arg in enumerate(args):
+                if isinstance(arg, bytes):
+                    arg = arg.decode()
+
+                if not annotations:
+                    raise j.exceptions.Runtime("argument {} in method {} doesn't have type annotation".format(specs.args[i], method_name))
+                
+                arg_type = annotations.pop(0)
+                casted.append(arg_type(arg))
+
+            result = method(*casted)
+
+            if isinstance(result, bytes):
+                result = result.decode()
+
+        except Exception:
+            error = traceback.format_exc()
+
+        return result, error
+
     def _on_connection(self, socket, address):
-        """Handling new connection
-
-        Arguments:
-            socket {socket} -- TCP socket
-            address {tuple[str, port]} -- connection address
-        """
-
         j.logger.info("New connection from {}", address)
-
         parser = DefaultParser(65536)
-        conn = RedisConnectionAdapter(socket)
-        encoder = ResponseEncoder(socket)
-        parser.on_connect(conn)
+        connection = RedisConnectionAdapter(socket)
+        try:
+            encoder = ResponseEncoder(socket)
+            parser.on_connect(connection)
+            while True:
+                try:
+                    response = parser.read_response()
+                    output = dict(success=True, error=None, result=None)
 
-        while True:
-            try:
-                response = parser.read_response()
-                output = dict(success=True, error=None, result=None)
+                    if len(response) > 1:
+                        actor_name = response.pop(0).decode()
+                        method_name = response.pop(0).decode()
+                        args = response
 
-                if len(response) > 1:
-                    actor_name = response[0].decode()
-                    method_name = response[1].decode()
-                    args = response[2:]
-
-                    if actor_name not in self.actors:
-                        output["success"] = False
-                        output["error"] = "Actor not loaded"
+                        if actor_name not in self._loaded_actors:
+                            output["error"] = "Actor not loaded"
+                        else:
+                            j.logger.info(
+                                "Executing method {} from actor {} to client {}", method_name, actor_name, address
+                            )
+                            output["result"], output["error"] = self._exceute(actor_name, method_name, args)
                     else:
+                        output["error"] = "Invalid request"
 
-                        j.logger.info("Executing method {} from actor {} to client {}", method_name, actor_name, address)
-                        
-                        actor = self._actors[actor_name]
-                        method = getattr(actor, method_name)
-                        try:
-                            result = method(*args)
-                            
-                            if isinstance(result, bytes):
-                                result = result.decode()
+                except ConnectionError:
+                    j.logger.info("Client {} closed the connection", address)
 
-                            output["result"] = result
+                except Exception as err:
+                    j.logger.exception(err, exception=err)
+                    output["error"] = "Internal error"
 
-                        except Exception as err:
-                            output["success"] = False
-                            output["error"] = str(err)
+                output["success"] = output["error"] is None
+                encoder.encode(json.dumps(output))
 
-            except ConnectionError:
-                j.logger.info("Client {} closed the connection", address)
-                    
-            except Exception as err:
-                output["success"] = False
-                output["error"] = "internal error: %s" % str(err)
-                j.logger.error(str(err))
-            
-            encoder.encode(json.dumps(output))
-        parser.on_disconnect()
+            parser.on_disconnect()
+
+        except BrokenPipeError:
+            pass
