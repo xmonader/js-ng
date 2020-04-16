@@ -53,6 +53,10 @@ class NotImplemented(JSException):
     pass
 
 
+class Validation(JSException):
+    pass
+
+
 class Bug(JSException):
     pass
 

@@ -244,6 +244,14 @@ class GedisClient(Client):
     def reload(self):
         self.actors._load_all_actors()
 
+    def validate_actor(self, actor_path: str):
+        """Validate actor
+
+        Arguments:
+            actor_path {str} -- actor absolute path
+        """
+        
+
 
 class RemoteException(Exception):
     pass

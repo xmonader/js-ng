@@ -12,9 +12,9 @@ class Hamada:
     def from_dict(self, d):
         self.__dict__ = d
 
-class Example(BaseActor):
 
-    def add_two_ints(self, x: int, y: Hamada) -> int:
+class Example(BaseActor):
+    def add_two_ints(self, x: int, y: Hamada):
         """Adds two ints
         
         Arguments:
@@ -24,9 +24,9 @@ class Example(BaseActor):
         Returns:
             int -- the sum of the two ints
         """
-        return y.x
+        return y
 
-    def concate_two_strings(self, x: str, y: str) -> str:
+    def concate_two_strings(self, x: str, y) -> str:
         """Concate two strings
         
         Arguments:
@@ -37,6 +37,5 @@ class Example(BaseActor):
             str -- the concate of the two strings
         """
         return x + y
-
 
 Actor = Example

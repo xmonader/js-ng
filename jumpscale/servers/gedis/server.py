@@ -188,13 +188,17 @@ class GedisServer(Base):
         bound_arguments = signature.bind(*args, **kwargs)
         for name, value in bound_arguments.arguments.items():
             annotation = signature.parameters[name].annotation
-            if hasattr(annotation, "from_dict") and isinstance(value, dict):
-                obj = annotation(); obj.from_dict(value)
-                bound_arguments.arguments[name] = obj
+            if not annotation.__module__ == "builtins":
+                if "from_dict" in dir(annotation) and isinstance(value, dict):
+                    obj = annotation()
+                    obj.from_dict(value)
+                    bound_arguments.arguments[name] = obj
 
             if not isinstance(bound_arguments.arguments[name], annotation):
-                raise TypeError(f"argument {name} supposed to be of type {annotation.__name__}, but found {type(value).__name__}")
-        
+                raise TypeError(
+                    f"parameter ({name}) supposed to be of type ({annotation.__name__}), but found ({type(value).__name__})"
+                )
+
         return bound_arguments.args, bound_arguments.kwargs
 
     def _exceute(self, actor_name, method_name, args, kwargs):
@@ -209,7 +213,7 @@ class GedisServer(Base):
                 result = result.decode()
 
         except Exception:
-            error = better_exceptions.format_exception(* sys.exc_info())
+            error = better_exceptions.format_exception(*sys.exc_info())
 
         return result, error
 
@@ -236,7 +240,7 @@ class GedisServer(Base):
                         if response:
                             payload = json.loads(response.pop(0).decode())
                             args, kwargs = payload["args"], payload["kwargs"]
-         
+
                         args = args or ()
                         kwargs = kwargs or {}
 

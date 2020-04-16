@@ -3,7 +3,8 @@ import importlib
 import os
 import sys
 import json
-
+import inspect
+from jumpscale.god import j
 
 class CoreActor(BaseActor):
     def __init__(self, server):
@@ -38,7 +39,13 @@ class SystemActor(BaseActor):
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         spec.loader.exec_module(module)
-        self.server._register_actor(actor_name, module.Actor())
+        actor = module.Actor()
+        result = actor.__validate_actor__()
+
+        if not result["valid"]:
+            raise j.exceptions.Validation(str(result["errors"]))
+
+        self.server._register_actor(actor_name, actor)
         return True
 
     def unregister_actor(self, actor_name: str) -> bool:
