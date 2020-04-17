@@ -1,6 +1,6 @@
 from jumpscale.servers.gedis.baseactor import BaseActor
 from typing import Sequence
-
+from jumpscale.god import j
 
 class Hamada:
     def __init__(self):
@@ -14,7 +14,7 @@ class Hamada:
 
 
 class Example(BaseActor):
-    def add_two_ints(self, x: int, y: Hamada):
+    def add_two_ints(self, x: int, y: Hamada) -> Hamada:
         """Adds two ints
         
         Arguments:
@@ -24,9 +24,11 @@ class Example(BaseActor):
         Returns:
             int -- the sum of the two ints
         """
+        x = j.clients.sshkey.get("main")
+
         return y
 
-    def concate_two_strings(self, x: str, y) -> str:
+    def concate_two_strings(self, x: str, y: str) -> str:
         """Concate two strings
         
         Arguments:
@@ -38,4 +40,6 @@ class Example(BaseActor):
         """
         return x + y
 
+
 Actor = Example
+Types = [Hamada]

@@ -181,6 +181,7 @@ class GedisServer(Base):
         self._loaded_actors[actor_name] = actor_module
 
     def _unregister_actor(self, actor_name: str):
+        print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", actor_name)
         self._loaded_actors.pop(actor_name, None)
 
     def _validate_method_arguments(self, method, args, kwargs):
@@ -189,13 +190,14 @@ class GedisServer(Base):
         for name, value in bound_arguments.arguments.items():
             annotation = signature.parameters[name].annotation
             if not annotation.__module__ == "builtins":
-                if "from_dict" in dir(annotation) and isinstance(value, dict):
-                    obj = annotation()
-                    obj.from_dict(value)
-                    bound_arguments.arguments[name] = obj
+                if isinstance(value, dict):
+                    if 'from_dict' in dir(annotation):
+                        annotation_object = annotation()
+                        annotation_object.from_dict(value)
+                        bound_arguments.arguments[name] = annotation_object
 
             if not isinstance(bound_arguments.arguments[name], annotation):
-                raise TypeError(
+                raise j.exceptions.Validation(
                     f"parameter ({name}) supposed to be of type ({annotation.__name__}), but found ({type(value).__name__})"
                 )
 
@@ -211,6 +213,12 @@ class GedisServer(Base):
 
             if isinstance(result, bytes):
                 result = result.decode()
+
+            elif not type(result).__module__ == "builtins":
+                result = result.to_dict()
+        
+        except j.exceptions.Validation as e:
+            error = str(e)
 
         except Exception:
             error = better_exceptions.format_exception(*sys.exc_info())
@@ -238,8 +246,7 @@ class GedisServer(Base):
                         method_name = response.pop(0).decode()
 
                         if response:
-                            payload = json.loads(response.pop(0).decode())
-                            args, kwargs = payload["args"], payload["kwargs"]
+                            args, kwargs = json.loads(response.pop(0))
 
                         args = args or ()
                         kwargs = kwargs or {}

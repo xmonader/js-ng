@@ -15,7 +15,7 @@ class MemoryProfiler(BaseActor):
         """
         return count(object_type)
     
-    def print_top_types(self, limit: int):
+    def print_top_types(self, limit: int) -> None:
         """Print top x object in memory
         
         Arguments:

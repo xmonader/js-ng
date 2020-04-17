@@ -6,22 +6,10 @@ import json
 from typing import List
 import codecs
 import pickle
-
-
-types = {
-    "int": int,
-    "str": str,
-    "float": float,
-    "bool": bool,
-    "set": set,
-    "bytes": bytes,
-    "complex": complex,
-    "list": list,
-    "dict": dict,
-    "tuple": tuple,
-    "callable": callable,
-}
-
+import inspect
+import os
+import sys
+from jumpscale.tools.codeloader import load_python_module
 
 class ActorProxy:
     def __init__(self, actor_name, actor_info, gedis_client):
@@ -36,59 +24,17 @@ class ActorProxy:
         self.actor_info = actor_info
         self._gedis_client = gedis_client
 
-    def _map_inputs(self, actor_name, method_name, *args, **kwargs):
-        signature_blob = self.actor_info[method_name]["signature"]
+    def _deserialize_response(self, response, response_type):
+        if isinstance(response, response_type):
+            return response
 
-        signature = pickle.loads(codecs.decode(signature_blob, "hex"))
-        binded = signature.bind(*args, **kwargs)
-
-        # import ipdb; ipdb.set_trace()
-
-
-
-        return binded.args, binded.kwargs
-
-        
-        # new_args = []
-        # new_kwargs = {}
-        
-        # for arg in func_spec["args"]:
-        #     argname, argtype = arg
-
+        if isinstance(response, dict):
+            if 'from_dict' in dir(response_type):
+                response_object = response_type()
+                response_object.from_dict(response)
+                return response_object
             
-
-
-
-
-
-        # if not len(args) + len(kwargs) == len(func_args):
-        #     raise j.exceptions.Value(
-        #         f"invalid number of arguments, expected {len(func_args)} but got {len(args)}"
-        #     )
-
-        # if kwargs:
-        #     func_args_names = [x[0] for x in func_args]
-        #     for key in kwargs.keys():
-        #         if key not in func_args_names:
-        #             raise j.exceptions.Value(f"got an unexpected keyword argument {key}")
-
-        # if not len(args) + len(kwargs) == len(func_args):
-        #     raise j.exceptions.Value(
-        #         f"invalid number of arguments, expected {len(func_args)} but got {len(args)}"
-        #     )
-
-        # for i, arg in enumerate(args):
-        #     arg_type = type(arg).__name__
-        #     func_arg_name, func_arg_type = func_args[i]
-
-        #     if func_arg_type and func_arg_type != arg_type:
-        #         validation_errors.append(
-        #             f"argument {func_arg_name} is supposed to be {func_arg_type}, but got {arg_type}"
-        #         )
-        
-        # if validation_errors:
-        #     raise j.exceptions.Value('\n'.join(validation_errors))
-
+        return response
 
     def __dir__(self):
         """Delegate the available functions on the ActorProxy to `actor_info` keys
@@ -107,15 +53,22 @@ class ActorProxy:
         Returns:
             function -- function waiting on the arguments
         """
+        def method(actor_name, actor_method, response_type, *args, **kwargs):
+            response = self._gedis_client.execute(actor_name, actor_method, *args, **kwargs)
+            if response_type:
+                return self._deserialize_response(response, response_type)
 
-        def mkfun(actor_name, fn_name, *args, **kwargs):
-            payload = {"args": args, "kwargs": kwargs}
-            return self._gedis_client.execute(actor_name, fn_name, json.dumps(payload, default=lambda o: o.to_dict()))
+            return response
 
-        func = partial(mkfun, self.actor_name, attr)
+        response_type = self.actor_info[attr]["response_type"]
+        if response_type:
+            module = sys.modules.get(self.actor_info["module"])
+            if module:
+                response_type = getattr(module, response_type)
+
+        func = partial(method, self.actor_name, attr, response_type)
         func.__doc__ = self.actor_info[attr]["doc"]
         return func
-
 
 class ActorsCollection:
     def __init__(self, gedis_client):
@@ -126,6 +79,7 @@ class ActorsCollection:
         """
         self._gedis_client = gedis_client
         self._actors = {}
+        self._loaded_modules = set()
         self._load_all_actors()
 
     def __dir__(self):
@@ -143,6 +97,12 @@ class ActorsCollection:
         if actor_name in self.actors_names:
             actor_info = self._gedis_client.execute(actor_name, "info")
             self._actors[actor_name] = ActorProxy(actor_name, actor_info, self._gedis_client)
+            self._load_module(actor_info["path"])
+
+    def _load_module(self, module_path):
+        if module_path not in self._loaded_modules:
+            load_python_module(module_path)
+            self._loaded_modules.add(module_path)
 
     def _load_all_actors(self):
         """Load actor: creating ActorProxy for remote actor `actor_name` and store it in the collection.
@@ -156,7 +116,7 @@ class ActorsCollection:
         for actor_name in self.actors_names:
             actor_info = self._gedis_client.execute(actor_name, "info")
             self._actors[actor_name] = ActorProxy(actor_name, actor_info, self._gedis_client)
-
+            self._load_module(actor_info["path"])
 
 class GedisClient(Client):
     name = fields.String(default="local")
@@ -168,6 +128,7 @@ class GedisClient(Client):
         self._redisclient = None
         self.redis_client
         self.actors = ActorsCollection(self)
+        self.actors._load_all_actors()
 
     @property
     def redis_client(self):
@@ -182,7 +143,7 @@ class GedisClient(Client):
         self._redisclient.save()
         return self._redisclient
 
-    def execute(self, actor_name: str, actor_method: str, *args):
+    def execute(self, actor_name: str, actor_method: str, *args, **kwargs):
         """Execute
 
         Arguments:
@@ -191,14 +152,13 @@ class GedisClient(Client):
             *args      {List[object]}  -- *args of parameters
 
         """
-        response = self._redisclient.execute_command(actor_name, actor_method, *args)
+        payload = json.dumps((args, kwargs), default=lambda o: o.to_dict())
+        response = self._redisclient.execute_command(actor_name, actor_method, payload)
         response_json = json.loads(response.decode())
-
         if response_json["success"]:
             return response_json["result"]
-        
-        print(response_json["error"])
-        # raise RemoteException(response_json["error"])
+
+        raise RemoteException(response_json["error"])
 
     def doc(self, actor_name: str):
         """Gets the documentation of actor `actor_name`
@@ -227,7 +187,7 @@ class GedisClient(Client):
 
         """
         if "system" not in self.actors.actors_names:
-            raise j.exceptions.NotImplemented("Gedis server doesn't support registering actors")
+            raise j.exceptions.NotImplemented("System actor is not loaded in the server")
 
         response = self.execute("system", "register_actor", actor_name, actor_path)
         if response:
@@ -243,14 +203,6 @@ class GedisClient(Client):
 
     def reload(self):
         self.actors._load_all_actors()
-
-    def validate_actor(self, actor_path: str):
-        """Validate actor
-
-        Arguments:
-            actor_path {str} -- actor absolute path
-        """
-        
 
 
 class RemoteException(Exception):

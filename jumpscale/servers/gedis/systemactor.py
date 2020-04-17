@@ -1,10 +1,10 @@
-from .baseactor import BaseActor
-import importlib
 import os
 import sys
 import json
 import inspect
 from jumpscale.god import j
+from jumpscale.servers.gedis.baseactor import BaseActor
+
 
 class CoreActor(BaseActor):
     def __init__(self, server):
@@ -33,17 +33,14 @@ class SystemActor(BaseActor):
         Returns:
             bool -- True if registered.
         """
-        module_python_name = os.path.dirname(actor_path)
-        module_name = os.path.splitext(module_python_name)[0]
-        spec = importlib.util.spec_from_file_location(module_name, actor_path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+        module = j.tools.codeloader.load_python_module(actor_path)
         actor = module.Actor()
         result = actor.__validate_actor__()
 
         if not result["valid"]:
-            raise j.exceptions.Validation(str(result["errors"]))
+            raise j.exceptions.Validation(
+                "Actor {} is not valid, check the following errors {}".format(actor_name, result["errors"])
+            )
 
         self.server._register_actor(actor_name, actor)
         return True
@@ -57,5 +54,7 @@ class SystemActor(BaseActor):
         Returns:
             bool -- True if actors is unregistered
         """
+        actor_info = self.server._loaded_actors[actor_name].info()
+        del sys.modules[actor_info["module"]]
         self.server._unregister_actor(actor_name)
         return True
