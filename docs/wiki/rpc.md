@@ -59,6 +59,8 @@ JS-NG> cl.actors.example.add_two_ints(1, 2)
 
 ## Type annotations and Actors
 
+We make use of type annotations for many things in gedis framework, including types and parameters validations, self documenting actors
+
 Here is an example actor
 ```python
 from jumpscale.servers.gedis.baseactor import BaseActor
@@ -133,8 +135,15 @@ At this point we can do `cl.reload` to add `test_actor` into the client domain
 ```
 JS-NG> cl.reload()  
 ```
+### Getting actor documentation and information from
 
-## Using the actor methods
+```
+JS-NG> cl.actors.test_actor.info()                                                                
+{'module': '/home/xmonader/wspace/js-next/js-ng/jumpscale/servers/gedis', 'path': '/home/xmonader/wspace/js-next/js-ng/jumpscale/servers/gedis/example_actor.py', 'methods': {'add_two_ints': {'args': [['x', 'int'], ['y', 'int']], 'doc': 'Adds two ints\n        \n        Arguments:\n            x {int} -- first int\n            y {int} -- second int\n        \n        Returns:\n            int -- the sum of the two ints\n        ', 'response_type': None}, 'concate_two_strings': {'args': [['x', 'str'], ['y', 'str']], 'doc': 'Concate two strings\n        \n        Arguments:\n            x {str} -- first string\n            y {str} -- second string\n        \n        Returns:\n            str -- the concate of the two strings\n        ', 'response_type': None}, 'info': {'args': [], 'doc': '', 'response_type': None}, 'get_testobject': {'args': [['myobj', 'TestObject'], ['new_value', 'int']], 'doc': 'returns an object of type Test object with update attribute attr to `new_value`\n        \n        Arguments:\n            myobj {TestObject} -- the object to be modified\n        \n        Returns:\n            TestObject -- modified object\n        ', 'response_type': 'TestObject'}}}
+
+```
+
+### Using the actor methods
 
 ```
 JS-NG> cl.actors.test_actor.add_two_ints(4, 5)
@@ -205,7 +214,7 @@ TypeError: too many positional arguments
 
 ```
 
-## Complex types
+### Complex types
 
 Let's assume that we have a complex type like
 
