@@ -102,9 +102,9 @@ class Example(BaseActor):
         """
         return x + y
 
-    def modify_object(self, myobj: TestObject, new_value: int) -> TestObject:
-        """Modify atrribute attr of the given object
-        
+    def get_testobject(self, myobj: TestObject, new_value: int) -> TestObject:
+        """returns an object of type Test object with update attribute attr to `new_value`
+
         Arguments:
             myobj {TestObject} -- the object to be modified
         
@@ -223,7 +223,7 @@ class TestObject:
 Any object with `to_dict` and `from_dict` is ok to use in actor methods for the serialization on the wire.
 
 ```python
-    def modify_object(self, myobj: TestObject, new_value: int) -> TestObject:
+    def get_testobject(self, myobj: TestObject, new_value: int) -> TestObject:
         """Modify atrribute attr of the given object
         
         Arguments:
@@ -248,7 +248,7 @@ JS-NG> class TestObject:
      8     def from_dict(self, ddict): 
      9         self.__dict__ = ddict                                                              
 JS-NG> obj = TestObject()
-JS-NG> res = cl.actors.test_actor.modify_object(obj, 6)
+JS-NG> res = cl.actors.test_actor.get_testobject(obj, 6)
 JS-NG> res.attr
 6
 JS-NG> obj.attr
