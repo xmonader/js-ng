@@ -1,18 +1,32 @@
+import codecs
+import inspect
+import json
+import os
+import pickle
+import sys
+from functools import partial, update_wrapper
+from typing import List
+
 from jumpscale.clients.base import Client
 from jumpscale.core.base import fields
 from jumpscale.god import j
-from functools import update_wrapper, partial
-import json
-from typing import List
-import codecs
-import pickle
-import inspect
-import os
-import sys
 from jumpscale.tools.codeloader import load_python_module
+from jumpscale.servers.gedis.server import GedisErrorTypes
+
+
+class ActorResult:
+    def __init__(self, **kwargs):
+        self.success = kwargs.get("success", True)
+        self.result = kwargs.get("result", None)
+        self.error = kwargs.get("error", None)
+        self.error_type = kwargs.get("error_type", None)
+
+    def __dir__(self):
+        return list(self.__dict__.keys())
+
 
 class ActorProxy:
-    def __init__(self, actor_name, actor_info, gedis_client):
+    def __init__(self, actor_name, actor_info, client):
         """ActorProxy to remote actor on the server side
 
         Arguments:
@@ -22,19 +36,8 @@ class ActorProxy:
         """
         self.actor_name = actor_name
         self.actor_info = actor_info
-        self._gedis_client = gedis_client
-
-    def _deserialize_response(self, response, response_type):
-        if isinstance(response, response_type):
-            return response
-
-        if isinstance(response, dict):
-            if 'from_dict' in dir(response_type):
-                response_object = response_type()
-                response_object.from_dict(response)
-                return response_object
-            
-        return response
+        self.client = client
+        self.module = sys.modules.get(self.actor_info["module"])
 
     def __dir__(self):
         """Delegate the available functions on the ActorProxy to `actor_info` keys
@@ -44,7 +47,7 @@ class ActorProxy:
         """
         return list(self.actor_info["methods"].keys())
 
-    def __getattr__(self, attr):
+    def __getattr__(self, method):
         """Return a function representing the remote function on the actual actor
 
         Arguments:
@@ -53,34 +56,18 @@ class ActorProxy:
         Returns:
             function -- function waiting on the arguments
         """
-        def method(actor_name, actor_method, response_type, *args, **kwargs):
-            response = self._gedis_client.execute(actor_name, actor_method, *args, **kwargs)
-            if response_type:
-                return self._deserialize_response(response, response_type)
 
-            return response
+        def function(*args, **kwargs):
+            return self.client.execute(self.actor_name, method, *args, **kwargs)
 
-        response_type = self.actor_info["methods"][attr]["response_type"]
-        if response_type:
-            module = sys.modules.get(self.actor_info["module"])
-            if module:
-                response_type = getattr(module, response_type)
-
-        func = partial(method, self.actor_name, attr, response_type)
-        func.__doc__ = self.actor_info["methods"][attr]["doc"]
+        func = partial(function)
+        func.__doc__ = self.actor_info["methods"][method]["doc"]
         return func
 
-class ActorsCollection:
-    def __init__(self, gedis_client):
-        """ActorsCollection to allow using the actors like `gedis.actors.ACTORNAME.ACTORMETHOD(*ACTOR_METHOD_ARGS)
 
-        Arguments:
-            gedis_client {GedisClient} -- gedis client
-        """
-        self._gedis_client = gedis_client
-        self._actors = {}
-        self._loaded_modules = set()
-        self._load_all_actors()
+class ActorsCollection:
+    def __init__(self, actors):
+        self._actors = actors
 
     def __dir__(self):
         return list(self._actors.keys())
@@ -89,34 +76,6 @@ class ActorsCollection:
         if actor_name in self._actors:
             return self._actors[actor_name]
 
-    @property
-    def actors_names(self):
-        return self._gedis_client.execute("core", "list_actors")
-
-    def _load_actor(self, actor_name):
-        if actor_name in self.actors_names:
-            actor_info = self._gedis_client.execute(actor_name, "info")
-            self._actors[actor_name] = ActorProxy(actor_name, actor_info, self._gedis_client)
-            self._load_module(actor_info["path"])
-
-    def _load_module(self, module_path):
-        if module_path not in self._loaded_modules:
-            load_python_module(module_path)
-            self._loaded_modules.add(module_path)
-
-    def _load_all_actors(self):
-        """Load actor: creating ActorProxy for remote actor `actor_name` and store it in the collection.
-
-        Arguments:
-            actor_name {str} -- remote actor name
-
-        Returns:
-            ActorProxy -- ActorProxy that can call the remote actor.
-        """
-        for actor_name in self.actors_names:
-            actor_info = self._gedis_client.execute(actor_name, "info")
-            self._actors[actor_name] = ActorProxy(actor_name, actor_info, self._gedis_client)
-            self._load_module(actor_info["path"])
 
 class GedisClient(Client):
     name = fields.String(default="local")
@@ -126,83 +85,73 @@ class GedisClient(Client):
     def __init__(self):
         super().__init__()
         self._redisclient = None
-        self.redis_client
-        self.actors = ActorsCollection(self)
-        self.actors._load_all_actors()
+        self._loaded_actors = {}
+        self._loaded_modules = set()
+        self._actors_load()
+        self.actors = ActorsCollection(self._loaded_actors)
 
     @property
     def redis_client(self):
-        if not self._redisclient:
-            try:
-                self._redisclient = j.clients.redis.get(f"gedis_{self.name}")
-            except:
-                self._redisclient = j.clients.redis.new(f"gedis_{self.name}")
-
-        self._redisclient.hostname = self.hostname
-        self._redisclient.port = self.port
-        self._redisclient.save()
+        if self._redisclient is None:
+            self._redisclient = j.clients.redis.get(name=f"gedis_{self.name}", hostname=self.hostname, port=self.port)
         return self._redisclient
 
-    def execute(self, actor_name: str, actor_method: str, *args, **kwargs):
-        """Execute
+    def _module_load(self, path):
+        if path not in self._loaded_modules:
+            load_python_module(path)
+            self._loaded_modules.add(path)
 
-        Arguments:
-            actor_name {str} -- actor name
-            actor_name {str} -- actor method to execute
-            *args      {List[object]}  -- *args of parameters
+    def _actors_load(self):
+        for actor_name in self.actors_list():
+            actor_info = self.actor_info(actor_name)
+            self._module_load(actor_info["path"])
+            self._loaded_actors[actor_name] = ActorProxy(actor_name, actor_info, self)
 
-        """
-        payload = json.dumps((args, kwargs), default=lambda o: o.to_dict())
-        response = self._redisclient.execute_command(actor_name, actor_method, payload)
-        response_json = json.loads(response.decode())
-        if response_json["success"]:
-            return response_json["result"]
-
-        raise RemoteException(response_json["error"])
-
-    def doc(self, actor_name: str):
-        """Gets the documentation of actor `actor_name`
-
-        Arguments:
-            actor_name {str} -- actor to retrieve its documentation
-
-        """
-        return self.execute(actor_name, "info")["methods"]
-
-    def ppdoc(self, actor_name):
-        """Pretty print documentation of actor
-
-        Arguments:
-            actor_name {str} -- actor to print its documentation.
-        """
-        docs = self.doc(actor_name)
-        print(json.dumps(docs, indent=2, sort_keys=True))
-
-    def register_actor(self, actor_name: str, actor_path: str):
-        """Register actor on the server side (gedis server)
-
-        Arguments:
-            actor_name {str} -- actor name to be used in the system
-            actor_path {str} -- actor path on the remote gedis server
-
-        """
-        if "system" not in self.actors.actors_names:
-            raise j.exceptions.NotImplemented("System actor is not loaded in the server")
-
-        response = self.execute("system", "register_actor", actor_name, actor_path)
-        if response:
-            self.actors._load_actor(actor_name)
-
-    def list_actors(self) -> List[str]:
-        """List actors
-
+    def actors_list(self) -> list:
+        """Lists actors
+        
         Returns:
-            List[str] -- list of actors available on gedis server.
+            list -- list of actors
         """
-        return self.execute("core", "list_actors")
+        return self._execute("core", "list_actors")["result"]
 
-    def reload(self):
-        self.actors._load_all_actors()
+    def actor_info(self, actor_name):
+        return self._execute(actor_name, "info")["result"]
+
+    def _execute(self, actor_name: str, actor_method: str, *args, die: bool = True, **kwargs) -> dict:
+        payload = json.dumps((args, kwargs), default=lambda o: o.to_dict())
+        response = self.redis_client.execute_command(actor_name, actor_method, payload)
+        response = json.loads(response.decode())
+
+        if not response["success"] and die:
+            raise RemoteException(response["error"])
+
+        return response
+
+    def execute(self, actor_name: str, actor_method: str, *args, **kwargs) -> dict:
+        actor = self._loaded_actors.get(actor_name)
+        if not actor:
+            raise j.exceptions.NotFound(f"Actor {actor_name} is not loaded")
+
+        method = actor.actor_info["methods"].get(actor_method)
+        if not method:
+            raise j.exceptions.Value(f"Actor {actor_name} doesn't have method {actor_method}")
+
+        response = self._execute(actor_name, actor_method, *args, die=False, **kwargs)
+        result = response["result"]
+        result_type_name = method["result_type"]
+        return_type = actor.module.__dict__.get(result_type_name) or actor.module.__builtins__.get(result_type_name)
+
+        if return_type and not isinstance(result, return_type):
+            if hasattr(return_type, "from_dict"):
+                result_object = return_type()
+                result_object.from_dict(result)
+                result = result_object
+
+        response["result"] = result
+        if response["error_type"]:
+            response["error_type"] = GedisErrorTypes(response["error_type"])
+        return ActorResult(**response)
 
 
 class RemoteException(Exception):

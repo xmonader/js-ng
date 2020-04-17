@@ -5,64 +5,80 @@ import pickle
 import sys
 
 
-
 class BaseActor:
     def info(self) -> dict:
-        result = {}
-        result["module"] = self.__module__
-        result["path"] = sys.modules[self.__class__.__module__].__file__ 
-        result["methods"] = {}
+        info = {}
+        info["module"] = self.__module__
+        info["path"] = sys.modules[self.__class__.__module__].__file__
+        info["methods"] = {}
 
         methods = inspect.getmembers(self, predicate=inspect.ismethod)
         for name, attr in methods:
             if name.startswith("_"):
                 continue
-            
+
             signature = inspect.signature(attr)
-            result["methods"][name] = {}
-            result["methods"][name]["args"] = []
+            info["methods"][name] = {}
+            info["methods"][name]["args"] = []
 
-            response_type = None
-            if signature.return_annotation:
-                if not signature.return_annotation.__module__ == "builtins":
-                    response_type = signature.return_annotation.__name__
 
-            result["methods"][name]["doc"] = attr.__doc__ or ""
-            result["methods"][name]["response_type"] = response_type
+            result_type = signature.return_annotation
+            if result_type is inspect._empty:
+                result_type = type(None)
+
+            if inspect.isclass(signature.return_annotation):
+                result_type = signature.return_annotation.__name__
+
+            info["methods"][name]["result_type"] = result_type
+            info["methods"][name]["doc"] = attr.__doc__ or ""
+
             for parameter_name, parameter in signature.parameters.items():
-                result["methods"][name]["args"].append((parameter_name, parameter.annotation.__name__))
+                info["methods"][name]["args"].append((parameter_name, parameter.annotation.__name__))
 
-        return result
+        return info
+
+    @property
+    def __weakref__(self):
+        return self.__wrapped__.__weakref__
 
     def __validate_actor__(self):
-        def _validate_annotation(method_name, title, annotation):
-            if "from_dict" not in dir(annotation):
-                result["errors"][method_name].append(
-                    f"type ({annotation.__name__}) which annotates ({title}) doesn't have from_dict method"
-                )
-            if "to_dict" not in dir(annotation):
-                result["errors"][method_name].append(
-                    f"type ({annotation.__name__}) which annotates ({title}) doesn't have to_dict method"
-                )
+        TYPES = [str, int, float, list, tuple, dict, bool]
+
+        def validate_annotation(annotation, annotated):
+            if annotation is None or annotation is inspect._empty:
+                return
+
+            if not (inspect.isclass(annotation) and annotation.__class__ == type):
+                raise ValueError("annotation must be a class type")
+
+            if annotation not in TYPES:
+                if annotation.__module__ == "builtins":
+                    raise ValueError(f"unsupported type ({annotation.__name__})")
+
+                for method in ["to_dict", "from_dict"]:
+                    if method not in dir(annotation):
+                        raise ValueError(
+                            f"type ({annotation.__name__}) which annotate {annotated} doesn't have {method} method"
+                        )
 
         result = {"valid": True, "errors": {}}
         methods = inspect.getmembers(self, predicate=inspect.ismethod)
-        for method_name, attr in methods:
+        for method_name, method_callable in methods:
             if method_name.startswith("_"):
                 continue
 
             result["errors"][method_name] = []
-            signature = inspect.signature(attr)
-            if signature.return_annotation is inspect._empty:
-                result["errors"][method_name].append(f"method doesn't have return type annotation")
-            elif signature.return_annotation and not signature.return_annotation.__module__ == "builtins" :
-                _validate_annotation(method_name, "methods' return", signature.return_annotation)
+            signature = inspect.signature(method_callable)
+            try:
+                validate_annotation(signature.return_annotation, "return")
+            except ValueError as e:
+                result["errors"][method_name].append(str(e))
 
-            for parameter_name, parameter in signature.parameters.items():
-                if parameter.annotation is inspect._empty:
-                    result["errors"][method_name].append(f"parameter ({parameter_name}) doesn't have type annotation")
-                elif not parameter.annotation.__module__ == "builtins":
-                    _validate_annotation(method_name, f"parameter {parameter_name}", parameter.annotation)
+            for name, parameter in signature.parameters.items():
+                try:
+                    validate_annotation(parameter.annotation, f"parameter ({name})")
+                except ValueError as e:
+                    result["errors"][method_name].append(str(e))
 
         if any(result["errors"].values()):
             result["valid"] = False

@@ -1,20 +1,30 @@
-import sys
-from io import BytesIO
-import better_exceptions
-import json
-from functools import partial
-import gevent
 import inspect
+import json
+import sys
+from enum import Enum
+from functools import partial
+from io import BytesIO
+from signal import SIGKILL, SIGTERM
+
+import better_exceptions
+import gevent
 from gevent import time
 from gevent.pool import Pool
 from gevent.server import StreamServer
-from signal import SIGTERM, SIGTERM, SIGKILL
-from redis.connection import DefaultParser, Encoder
-from .baseactor import BaseActor
-from redis.exceptions import ConnectionError
-from jumpscale.god import j
-from .systemactor import CoreActor, SystemActor
 from jumpscale.core.base import Base, fields
+from jumpscale.god import j
+from redis.connection import DefaultParser, Encoder
+from redis.exceptions import ConnectionError
+
+from .baseactor import BaseActor
+from .systemactor import CoreActor, SystemActor
+
+
+class GedisErrorTypes(Enum):
+    NOT_FOUND = 0
+    BAD_REQUEST = 1
+    ACTOR_ERROR = 2
+    INTERNAL_SERVER_ERROR = 3
 
 
 class RedisConnectionAdapter:
@@ -24,8 +34,8 @@ class RedisConnectionAdapter:
         self.socket_timeout = 600
         self.socket_connect_timeout = 600
         self.socket_keepalive = True
-        self.socket_keepalive_options = {}
         self.retry_on_timeout = True
+        self.socket_keepalive_options = {}
         self.encoder = Encoder("utf", "strict", False)
 
 
@@ -98,8 +108,8 @@ class ResponseEncoder:
         self.buffer = BytesIO()  # seems faster then truncating
 
 
+SERIALIZABLE_TYPES = (str, int, float, list, tuple, dict, bool)
 RESERVED_ACTOR_NAMES = ("core", "system")
-
 
 class GedisServer(Base):
     host = fields.String(default="127.0.0.1")
@@ -185,44 +195,61 @@ class GedisServer(Base):
 
     def _validate_method_arguments(self, method, args, kwargs):
         signature = inspect.signature(method)
-        bound_arguments = signature.bind(*args, **kwargs)
-        for name, value in bound_arguments.arguments.items():
+        try:
+            bound = signature.bind(*args, **kwargs)
+        except TypeError as e:
+            raise j.exceptions.Validation(e)
+
+        for name, val in bound.arguments.items():
             annotation = signature.parameters[name].annotation
-            if not annotation.__module__ == "builtins":
-                if isinstance(value, dict):
-                    if 'from_dict' in dir(annotation):
-                        annotation_object = annotation()
-                        annotation_object.from_dict(value)
-                        bound_arguments.arguments[name] = annotation_object
+            if not isinstance(val, annotation):
+                if hasattr(annotation, "from_dict"):
+                    argument_object = annotation()
+                    argument_object.from_dict(val)  
+                    bound.arguments[name] = argument_object
+                else:
+                    raise j.exceptions.Validation(
+                       f"parameter ({name}) supposed to be of type ({annotation}), but found ({type(val)})"
+                    )
 
-            if not isinstance(bound_arguments.arguments[name], annotation):
-                raise j.exceptions.Validation(
-                    f"parameter ({name}) supposed to be of type ({annotation.__name__}), but found ({type(value).__name__})"
-                )
+        return_type = signature.return_annotation
+        if return_type in (None, inspect._empty):
+            return_type = type(None)
 
-        return bound_arguments.args, bound_arguments.kwargs
+        return bound.args, bound.kwargs, return_type
 
     def _exceute(self, actor_name, method_name, args, kwargs):
-        result = error = None
+        result = error = error_type = None
         actor = self._loaded_actors[actor_name]
         method = getattr(actor, method_name)
         try:
-            args, kwargs = self._validate_method_arguments(method, args, kwargs)
+            args, kwargs, return_type = self._validate_method_arguments(method, args, kwargs)
             result = method(*args, **kwargs)
 
-            if isinstance(result, bytes):
-                result = result.decode()
+            if isinstance(result, return_type):
+                if return_type not in SERIALIZABLE_TYPES:
+                    if hasattr(result, "to_dict"):
+                        result = result.to_dict()
+                    else:
+                        j.exceptions.Value("Failed to serialize response result")
+            else:
+                message = f"method {actor_name}:{method_name} is supposed to return ({return_type}), but it returned ({type(result)})"
+                if isinstance(result, SERIALIZABLE_TYPES):
+                    j.logger.warning(message)
+                else:
+                    result = None
+                    raise j.exceptions.Value(message)
 
-            elif not type(result).__module__ == "builtins":
-                result = result.to_dict()
-        
         except j.exceptions.Validation as e:
             error = str(e)
+            error_type = GedisErrorTypes.BAD_REQUEST.value
 
-        except Exception:
-            error = better_exceptions.format_exception(*sys.exc_info())
+        except:
+            ttype, tvalue, tb = sys.exc_info()
+            error = better_exceptions.format_exception(ttype, tvalue, tb.tb_next)
+            error_type = GedisErrorTypes.ACTOR_ERROR.value
 
-        return result, error
+        return result, error, error_type
 
     def _on_connection(self, socket, address):
         j.logger.info("New connection from {}", address)
@@ -235,7 +262,7 @@ class GedisServer(Base):
             while True:
                 try:
                     response = parser.read_response()
-                    output = dict(success=True, error=None, result=None)
+                    output = dict(success=True, result=None, error=None, error_type=None)
                     args = kwargs = None
 
                     if len(response) < 2:
@@ -251,19 +278,24 @@ class GedisServer(Base):
                         kwargs = kwargs or {}
 
                         if actor_name not in self._loaded_actors:
-                            output["error"] = "Actor not loaded"
+                            output["error"] = "actor not found"
+                            output["error_type"] = GedisErrorTypes.ACTOR_ERROR.value
+
                         else:
                             j.logger.info(
                                 "Executing method {} from actor {} to client {}", method_name, actor_name, address
                             )
-                            output["result"], output["error"] = self._exceute(actor_name, method_name, args, kwargs)
+                            output["result"], output["error"], output["error_type"] = self._exceute(
+                                actor_name, method_name, args, kwargs
+                            )
 
                 except ConnectionError:
                     j.logger.info("Client {} closed the connection", address)
 
-                except Exception as err:
-                    j.logger.exception(err, exception=err)
-                    output["error"] = "Internal error"
+                except Exception as execption:
+                    j.logger.execption("internal error", execption=execption)
+                    output["error"] = "internal server error"
+                    output["error_type"] = GedisErrorTypes.INTERNAL_SERVER_ERROR.value
 
                 output["success"] = output["error"] is None
                 encoder.encode(json.dumps(output))

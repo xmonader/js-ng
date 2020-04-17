@@ -30,4 +30,5 @@ pong no?
 from jumpscale.core.base import StoredFactory
 from .server import GedisServer
 
+
 export_module_as = StoredFactory(GedisServer)
