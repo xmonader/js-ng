@@ -4,10 +4,10 @@ monkey.patch_all()
 
 import unittest
 from jumpscale.god import j
-from jumpscale.servers.gedis.example_actor import Hamada
+from jumpscale.servers.gedis.example_actor import TestObject
 
 
-COUNT = 1
+COUNT = 10000
 POOLS_COUNT = 100
 ACTOR_PATH = "/sandbox/code/github/js-next/js-ng/jumpscale/servers/gedis/example_actor.py"
 
@@ -28,10 +28,10 @@ class TestGedis(unittest.TestCase):
 
         def execute(i):
             j.logger.info('executing actor no {}', i)
-            hamada = Hamada()
-            hamada.x = 1
-            r = getattr(cl.actors, 'test_%s' % i).add_two_ints(1, hamada)
-            self.assertEqual(r.x, hamada.x)
+            myobject = TestObject()
+            myobject.atrr = i
+            result = getattr(cl.actors, 'test_%s' % i).modify_object(myobject, i)
+            self.assertEqual(result.attr, i)
 
         def unregister(i):
             j.logger.info('Unregister actor test_{}', i)
@@ -48,8 +48,6 @@ class TestGedis(unittest.TestCase):
             jobs.append(pool.spawn(execute, i))
 
         gevent.joinall(jobs)
-
-        import ipdb; ipdb.set_trace()
 
         self.assertEqual(cl.actors.memory.object_count('Example'), COUNT)
 

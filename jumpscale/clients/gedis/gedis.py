@@ -42,7 +42,7 @@ class ActorProxy:
         Returns:
             list -- methods available on the ActorProxy
         """
-        return list(self.actor_info.keys())
+        return list(self.actor_info["methods"].keys())
 
     def __getattr__(self, attr):
         """Return a function representing the remote function on the actual actor
@@ -60,14 +60,14 @@ class ActorProxy:
 
             return response
 
-        response_type = self.actor_info[attr]["response_type"]
+        response_type = self.actor_info["methods"][attr]["response_type"]
         if response_type:
             module = sys.modules.get(self.actor_info["module"])
             if module:
                 response_type = getattr(module, response_type)
 
         func = partial(method, self.actor_name, attr, response_type)
-        func.__doc__ = self.actor_info[attr]["doc"]
+        func.__doc__ = self.actor_info["methods"][attr]["doc"]
         return func
 
 class ActorsCollection:
@@ -167,7 +167,7 @@ class GedisClient(Client):
             actor_name {str} -- actor to retrieve its documentation
 
         """
-        return self.execute(actor_name, "info")
+        return self.execute(actor_name, "info")["methods"]
 
     def ppdoc(self, actor_name):
         """Pretty print documentation of actor

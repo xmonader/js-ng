@@ -1,20 +1,21 @@
 from jumpscale.servers.gedis.baseactor import BaseActor
 from typing import Sequence
 from jumpscale.god import j
+import inspect, sys
 
-class Hamada:
+class TestObject:
     def __init__(self):
-        self.x = 1
+        self.attr = None
 
     def to_dict(self):
         return self.__dict__
 
-    def from_dict(self, d):
-        self.__dict__ = d
+    def from_dict(self, ddict):
+        self.__dict__ = ddict
 
 
 class Example(BaseActor):
-    def add_two_ints(self, x: int, y: Hamada) -> Hamada:
+    def add_two_ints(self, x: int, y: int) -> int:
         """Adds two ints
         
         Arguments:
@@ -24,9 +25,7 @@ class Example(BaseActor):
         Returns:
             int -- the sum of the two ints
         """
-        x = j.clients.sshkey.get("main")
-
-        return y
+        return x + y
 
     def concate_two_strings(self, x: str, y: str) -> str:
         """Concate two strings
@@ -40,6 +39,16 @@ class Example(BaseActor):
         """
         return x + y
 
+    def modify_object(self, myobj: TestObject, new_value: int) -> TestObject:
+        """Modify atrribute attr of the given object
+        
+        Arguments:
+            myobj {TestObject} -- the object to be modified
+        
+        Returns:
+            TestObject -- modified object
+        """
+        myobj.attr = new_value
+        return myobj
 
 Actor = Example
-Types = [Hamada]

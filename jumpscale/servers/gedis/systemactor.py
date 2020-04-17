@@ -54,7 +54,5 @@ class SystemActor(BaseActor):
         Returns:
             bool -- True if actors is unregistered
         """
-        actor_info = self.server._loaded_actors[actor_name].info()
-        del sys.modules[actor_info["module"]]
         self.server._unregister_actor(actor_name)
         return True

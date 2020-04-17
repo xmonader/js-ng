@@ -8,37 +8,29 @@ import sys
 
 class BaseActor:
     def info(self) -> dict:
-        result = {"path": sys.modules[self.__class__.__module__].__file__ , "module": self.__module__}
+        result = {}
+        result["module"] = self.__module__
+        result["path"] = sys.modules[self.__class__.__module__].__file__ 
+        result["methods"] = {}
+
         methods = inspect.getmembers(self, predicate=inspect.ismethod)
         for name, attr in methods:
             if name.startswith("_"):
                 continue
             
             signature = inspect.signature(attr)
-            result[name] = {}
-            result[name]["doc"] = attr.__doc__ or ""
-            result[name]["args"] = []
+            result["methods"][name] = {}
+            result["methods"][name]["args"] = []
 
             response_type = None
             if signature.return_annotation:
                 if not signature.return_annotation.__module__ == "builtins":
                     response_type = signature.return_annotation.__name__
 
-            result[name]["response_type"] = response_type
-
-
-
-            #  parameter.annotation.__module__ == "builtins"
-
-            # if signature.return_annotation:
-            #     result[name]["response_type"] = signature.return_annotation.__name__
-            # else:
-            #     result[name]["response_type"] = signature.return_annotation
-
-            
-
-            # for parameter_name, parameter in signature.parameters.items():
-            #     result[name]["args"].append((parameter_name, parameter.annotation.__name__))
+            result["methods"][name]["doc"] = attr.__doc__ or ""
+            result["methods"][name]["response_type"] = response_type
+            for parameter_name, parameter in signature.parameters.items():
+                result["methods"][name]["args"].append((parameter_name, parameter.annotation.__name__))
 
         return result
 

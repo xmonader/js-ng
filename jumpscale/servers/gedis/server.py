@@ -181,7 +181,6 @@ class GedisServer(Base):
         self._loaded_actors[actor_name] = actor_module
 
     def _unregister_actor(self, actor_name: str):
-        print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", actor_name)
         self._loaded_actors.pop(actor_name, None)
 
     def _validate_method_arguments(self, method, args, kwargs):

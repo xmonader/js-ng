@@ -15,9 +15,3 @@ def load_python_module(module_path: str):
     spec.loader.exec_module(module)
 
     return module
-
-# def unload_python_module(module_name: str):
-#     # module_name = os.path.dirname(module_path)
-#     # spec = importlib.util.spec_from_file_location(module_name, module_path)
-#     # sys.modules[spec.name] = module
-
