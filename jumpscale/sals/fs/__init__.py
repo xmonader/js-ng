@@ -222,6 +222,7 @@ There are more functionality available in the SAL `j.sals.fs` make sure you chec
 
 """
 
+from pathlib import Path
 import pathlib
 import tempfile
 import os
@@ -229,6 +230,8 @@ import shutil
 import stat
 from distutils import dir_util
 from typing import List
+from typing import Union, Optional, List, Callable
+import jumpscale.core.exceptions as err
 
 basename = os.path.basename
 dirname = os.path.dirname
@@ -269,7 +272,7 @@ def cwd() -> str:
     return str(pathlib.Path.cwd())
 
 
-def is_dir(path: str) -> bool:
+def is_dir(path:Union[Path,str]) -> bool:
     """Checks if path is a dir
     e.g
         j.sals.fs.is_dir(path= '/home/rafy')  -> True
@@ -280,10 +283,11 @@ def is_dir(path: str) -> bool:
     Returns:
         bool: True if is dir and False otherwise
     """
+    path = _str_to_path(path)
     return pathlib.Path(path).is_dir()
 
 
-def is_file(path: str) -> bool:
+def is_file(path:Union[Path,str]) -> bool:
     """Checks if path is a file
     e.g
         j.sals.fs.is_file(path= '/home/rafy')  -> False
@@ -295,10 +299,11 @@ def is_file(path: str) -> bool:
     Returns:
         bool: True if is file and False otherwise
     """
+    path = _str_to_path(path)
     return pathlib.Path(path).is_file()
 
 
-def is_symlink(path: str) -> bool:
+def is_symlink(path:Union[Path,str]) -> bool:
     """Checks if path symlink
     e.g
         j.sals.fs.is_symlink('/home/rafy/testfile3')  -> True
@@ -310,10 +315,11 @@ def is_symlink(path: str) -> bool:
     Returns:
         bool: True if symlink False otherwise
     """
+    path = _str_to_path(path)
     return pathlib.Path(path).is_symlink()
 
 
-def is_absolute(path: str) -> bool:
+def is_absolute(path:Union[Path,str]) -> bool:
     """Checks if path is absolute
     e.g
         j.sals.fs.is_absolute('/home/rafy/')  -> True
@@ -325,10 +331,11 @@ def is_absolute(path: str) -> bool:
     Returns:
         bool: True if absolute
     """
+    path = _str_to_path(path)
     return pathlib.Path(path).is_absolute()
 
 
-def is_mount(path: str) -> bool:
+def is_mount(path:Union[Path,str]) -> bool:
     # TODO add example here
     """Checks if path is mount
 
@@ -338,11 +345,11 @@ def is_mount(path: str) -> bool:
     Returns:
         bool: True if mount
     """
+    path = _str_to_path(path)
+    return path.is_mount()
 
-    return pathlib.Path(path).is_mount()
 
-
-def is_ascii_file(path: str, checksize=4096) -> bool:
+def is_ascii_file(path:Union[Path,str], checksize=4096) -> bool:
     """Checks if file `path` is ascii
     e.g
          j.sals.fs.is_ascii_file(path="/home/rafy/testfile")  -> True
@@ -354,6 +361,7 @@ def is_ascii_file(path: str, checksize=4096) -> bool:
     Returns:
         bool: True if ascii file
     """
+    path=_path_to_str(path)
     # TODO: let's talk about checksize feature.
     try:
         with open(path, encoding="ascii") as f:
@@ -363,7 +371,7 @@ def is_ascii_file(path: str, checksize=4096) -> bool:
         return False
 
 
-def is_empty_dir(path: str) -> bool:
+def is_empty_dir(path:Union[Path,str]) -> bool:
     """Checks if path is emptry directory
     e.g
         j.sals.fs.is_empty_dir("/home/rafy/empty_dir")  -> True
@@ -375,9 +383,9 @@ def is_empty_dir(path: str) -> bool:
     Returns:
         bool: True if path is emptry directory
     """
-
+    path = _str_to_path(path)
     try:
-        g = pathlib.Path(path).iterdir()
+        g = path.iterdir()
         next(g)
     except StopIteration:
         # means we can't get next entry -> dir is empty.
@@ -389,7 +397,7 @@ def is_empty_dir(path: str) -> bool:
 is_binary_file = lambda path: not is_ascii_file(path)
 
 
-def is_broken_link(path: str, clean=False) -> bool:
+def is_broken_link(path:Union[Path,str], clean=False) -> bool:
     """Checks if path is a broken symlink
 
     Args:
@@ -402,10 +410,30 @@ def is_broken_link(path: str, clean=False) -> bool:
     Returns:
         bool: True if path is a broken symlink
     """
-    raise NotImplementedError()
+    raise err.NotImplemented("implement")
 
 
-def stem(path: str) -> str:
+def _str_to_path(path:Union[Path,str],needexist:bool=False)->Path:
+    if isinstance(path,str):
+        path=Path(path)
+    if needexist:
+        exists_required(path=path)
+    return path
+
+def _path_to_str(path:Union[Path,str],needexist:bool=False):
+    if not isinstance(path,str):
+        path=path.as_posix()
+    if needexist:
+        exists_required(path)
+    return path
+
+def exists_required(path:Union[Path,str])->None:
+    path=_str_to_path(path)
+    if not path.exists():
+        raise err.Operations(f"Path:'{path.as_posix()}' does not exist.")
+
+
+def stem(path: Union[Path,str]) -> str:
     """returns the stem of a path (path without parent directory and without extension)
     e.g
         j.sals.fs.stem("/tmp/tmp-5383p1GOmMOOwvfi.tpl")  -> 'tmp-5383p1GOmMOOwvfi'
@@ -416,10 +444,11 @@ def stem(path: str) -> str:
     Returns:
         str: path without parent directory and without extension
     """
+    path = _str_to_path(path)
     return pathlib.Path(path).stem
 
 
-def mkdir(path: str, exist_ok=True):
+def mkdir(path:Union[Path,str], exist_ok=True):
     """Makes directory at path
     e.g 
         j.sals.fs.mkdir("/home/rafy/testing_make_dir")
@@ -433,10 +462,11 @@ def mkdir(path: str, exist_ok=True):
     Returns:
         [type]: [description]
     """
-    return pathlib.Path(path).mkdir(exist_ok=exist_ok)
+    path = _str_to_path(path)
+    return path.mkdir(exist_ok=exist_ok)
 
 
-def mkdirs(path: str, exist_ok=True):
+def mkdirs(path:Union[Path,str], exist_ok=True):
     """Creates dir as well as all non exisitng parents in the path
     e.g
         j.sals.fs.mkdirs("/home/rafy/testing_make_dir/test1/test2",exist_ok=False) 
@@ -447,10 +477,11 @@ def mkdirs(path: str, exist_ok=True):
         path (str): path to create dir at
         exist_ok (bool, optional): won't fail if directory exists. Defaults to True.
     """
+    path = _path_to_str(path)
     return os.makedirs(path, exist_ok=exist_ok)
 
 
-def parent(path: str) -> str:
+def parent(path:Union[Path,str]) -> str:
     """Get path's parent
     e.g 
         j.sals.fs.parent("/home/rafy/testing_make_dir/test1")  -> '/home/rafy/testing_make_dir'
@@ -461,10 +492,11 @@ def parent(path: str) -> str:
     Returns:
         str: parent path.
     """
+    path=_str_to_path(path)
     return str(pathlib.Path(path).parent)
 
 
-def parents(path: str) -> List[str]:
+def parents(path:Union[Path,str]) -> List[str]:
     """Get parents list
 
     e.g
@@ -480,11 +512,11 @@ def parents(path: str) -> List[str]:
     Returns:
         List[str]: list of parents
     """
-
+    path=_str_to_path(path)
     return list([str(p) for p in pathlib.Path(path).parents])
 
 
-def path_parts(path: str) -> List[str]:
+def path_parts(path:Union[Path,str]):
     """Convert path to a list of parts
     e.g
         '/tmp/tmp-5383p1GOmMOOwvfi.tpl' ->  ('/', 'tmp', 'tmp-5383p1GOmMOOwvfi.tpl')
@@ -494,10 +526,11 @@ def path_parts(path: str) -> List[str]:
     Returns:
         List[str]: path parts.
     """
-    return pathlib.Path(path).parts
+    path=_str_to_path(path)
+    return path.parts
 
 
-def exists(path: str) -> bool:
+def exists(path:Union[Path,str]) -> bool:
     """Checks if path exists
     e.g
         j.sals.fs.exists("/home/rafy/testing_make_dir/test1")  -> True
@@ -509,10 +542,11 @@ def exists(path: str) -> bool:
     Returns:
         bool: True if exists
     """
-    return pathlib.Path(path).exists()
+    path=_str_to_path(path)
+    return path.exists()
 
 
-def rename(path1: str, path2: str):
+def rename(path1: Union[Path,str], path2: Union[Path,str]):
     """Rename path1 to path2
     e.g
         j.sals.fs.rename("/home/rafy/testing_make_dir","/home/rafy/testing_dir") 
@@ -522,10 +556,12 @@ def rename(path1: str, path2: str):
         path2 (str): dest path
 
     """
-    return pathlib.Path(path1).rename(path2)
+    path1=_str_to_path(path1)
+    path2=_str_to_path(path2)
+    return path.rename(path2)
 
 
-def expanduser(path: str) -> str:
+def expanduser(path:Union[Path,str]) -> str:
     """Expands the tilde `~` to username
     e.g
         j.sals.fs.expanduser("~/work") -> '/home/xmonader/work'
@@ -535,20 +571,22 @@ def expanduser(path: str) -> str:
     Returns:
         str: path with tilde `~` resolved.
     """
-    return str(pathlib.Path(path).expanduser())
+    path=_str_to_path(path,needexist=True)
+    return str(path.expanduser())
 
 
-def unlink(path: str):
+def unlink(path:Union[Path,str]):
     """unlink path
     e.g 
         j.sals.fs.unlink("/home/rafy/testfile3")
     Args:
         path (str): path to unlink
     """
-    return pathlib.Path(path).unlink()
+    path=_str_to_path(path)
+    return path.unlink()
 
 
-def read_text(path: str) -> str:
+def read_text(path:Union[Path,str]) -> str:
     """read ascii content at `path`
     e.g
         j.sals.fs.read_text("/home/rafy/testing_text.txt")  -> 'hello world\n'
@@ -559,13 +597,14 @@ def read_text(path: str) -> str:
     Returns:
         str: ascii content in path
     """
-    return pathlib.Path(path).read_text()
+    path=_str_to_path(path,needexist=True)
+    return path.read_text()
 
 
 read_ascii = read_file = read_text
 
 
-def read_bytes(path: str) -> bytes:
+def read_bytes(path:Union[Path,str]) -> bytes:
     """read binary content at `path`
     e.g
         j.sals.fs.read_bytes("/home/rafy/testing_text.txt")  -> b'hello world\n'
@@ -576,13 +615,14 @@ def read_bytes(path: str) -> bytes:
     Returns:
         bytes: binary content in path
     """
-    return pathlib.Path(path).read_bytes()
+    path=_str_to_path(path,needexist=True)
+    return path.read_bytes()
 
 
 read_binary = read_file_binary = read_bytes
 
 
-def write_text(path: str, data: str, encoding=None):
+def write_text(path:Union[Path,str], data: str, encoding=None):
     """write text `data` to path `path` with encoding
     e.g
         j.sals.fs.write_text(path="/home/rafy/testing_text.txt",data="hello world")  -> 11
@@ -596,13 +636,14 @@ def write_text(path: str, data: str, encoding=None):
         int: Return the decoded contents of the pointed-to file as a string
 
     """
-    return pathlib.Path(path).write_text(data, encoding)
+    path=_str_to_path(path)
+    return path.write_text(data, encoding)
 
 
 write_ascii = write_file = write_text
 
 
-def write_bytes(path: str, data: bytes):
+def write_bytes(path:Union[Path,str], data: bytes):
     """write binary `data` to path `path`
     e.g
         j.sals.fs.write_bytes(path="/home/rafy/testing_text.txt",data=b"hello world")  -> 11
@@ -614,13 +655,14 @@ def write_bytes(path: str, data: bytes):
     Returns:
         int: Return the binary contents of the pointed-to file as a bytes object 
     """
-    return pathlib.Path(path).write_bytes(data)
+    path=_str_to_path(path)
+    return path.write_bytes(data)
 
 
 write_binary = write_file_binary = write_bytes
 
 
-def touch(path: str):
+def touch(path:Union[Path,str]):
     """create file
     e.g
         j.sals.fs.touch("/home/rafy/testing_touch")
@@ -629,7 +671,8 @@ def touch(path: str):
         path (str): path to create file
 
     """
-    return pathlib.Path(path).touch()
+    path=_str_to_path(path)
+    return path.touch()
 
 
 def get_temp_filename(mode="w+b", buffering=-1, encoding=None, newline=None, suffix=None, prefix=None, dir=None) -> str:
@@ -710,31 +753,26 @@ def join_paths(*paths) -> str:
     return parts_to_path(paths)
 
 
-def rm_emptry_dir(path: str):
-    """Remove empty directory if the directory is not empty it will throw exception (Directory not empty)
+def delete(path: Union[str,Path]):
+    """
+    Remove dir, link or file
     e.g
-        j.sals.fs.rm_emptry_dir("/home/rafy/empty_dir")   
+    j.sals.fs.delete("/home/rafy/empty_dir")   
 
     Args:
-        path (str): path to remove.
-    """
-    path = pathlib.Path(path)
-    path.rmdir()
+        path (str,Path): path to remove.
 
-
-def rmtree(path: str):
-    """Remove directory tree
-    Args:
-        path (str): path to remove
     """
-    path = pathlib.Path(path)
+    path=_str_to_path(path)
     if path.is_file() or path.is_symlink():
-        os.remove(path)
+        os.remove(path.as_posix())
     elif path.is_dir():
-        shutil.rmtree(path)
+        path.rmdir()
+        # shutil.rmtree(path)
+    else:
+        raise err.Base("unsupported type")
 
-
-def copy_stat(src: str, dst: str, times=True, perms=True):
+def copy_stat(src: Union[str,Path], dst: Union[str,Path], times=True, perms=True):
     """Copy stat of src to dst
 
     Args:
@@ -743,6 +781,8 @@ def copy_stat(src: str, dst: str, times=True, perms=True):
         times (bool, optional):  Defaults to True.
         perms (bool, optional): permissions Defaults to True.
     """
+    src=_str_to_path(src,needexist=True)
+    dst=_str_to_path(dst)
     st = os.stat(src)
     if hasattr(os, "utime"):
         os.utime(dst, (st.st_atime, st.st_mtime))
@@ -751,7 +791,7 @@ def copy_stat(src: str, dst: str, times=True, perms=True):
         os.chmod(dst, m)
 
 
-def copy_file(src: str, dst: str, times=False, perms=False):
+def copy_file(src: Union[str,Path], dst: Union[str,Path], times=False, perms=False):
     """Copy the file, optionally copying the permission bits (mode) and
         last access/modify time. If the destination file exists, it will be
         replaced. Raises OSError if the destination is a directory. If the
@@ -768,12 +808,14 @@ def copy_file(src: str, dst: str, times=False, perms=False):
         dst (str): destination
 
     """
+    src=_path_to_str(src,needexist=True)
+    dst=_path_to_str(dst)    
     shutil.copyfile(src, dst)
     if times or perms:
         copy_stat(src, dst, times, perms)
 
 
-def symlink(src: str, dst: str, overwrite=False):
+def symlink(src: Union[str,Path], dst: Union[str,Path], overwrite=False):
     """Create a symbolic link.
     e.g
         j.sals.fs.symlink(src="/home/rafy/testing_text.txt",dst="/home/rafy/link_test")
@@ -783,6 +825,9 @@ def symlink(src: str, dst: str, overwrite=False):
         dst (str): Destination path of link
         overwrite (bool, optional): If link exists will delete it. Defaults to False.
     """
+    src=_path_to_str(src,needexist=True)
+    dst=_path_to_str(dst)   
+
     if overwrite and exists(dst):
         os.unlink(dst)
 
@@ -793,7 +838,7 @@ copy_tree = dir_util.copy_tree
 chdir = os.chdir
 
 
-def change_dir(path: str) -> str:
+def change_dir(path:Union[Path,str]) -> str:
     """Change current working directory to `path`
     e.g
          j.sals.fs.change_dir("/home/rafy/Documents")  -> '/home/rafy/Documents'
@@ -804,11 +849,12 @@ def change_dir(path: str) -> str:
     Returns:
         str: new current working dir
     """
+    path=_path_to_str(path,needexist=True)
     os.chdir(path)
     return path
 
 
-def chmod(path: str, mode):
+def chmod(path:Union[Path,str], mode):
     """change file mode for path to mode
     e.g
         j.sals.fs.chmod("/home/rafy/testing_dir",777)
@@ -818,10 +864,11 @@ def chmod(path: str, mode):
         mode (int): file mode
 
     """
-    return pathlib.Path(path).chmod(mode)
+    path=_str_to_path(path,needexist=True)
+    return path.chmod(mode)
 
 
-def lchmod(path: str, mode):
+def lchmod(path:Union[Path,str], mode):
     """change file mode for path to mode (handles links too)
 
     Args:
@@ -829,10 +876,11 @@ def lchmod(path: str, mode):
         mode (int): file mode
 
     """
-    return pathlib.Path(path).lchmod(mode)
+    path=_str_to_path(path,needexist=True)
+    return path.lchmod(mode)
 
 
-def stat(path: str):
+def stat(path:Union[Path,str]):
     """Gets stat of path `path`
     e.g 
         j.sals.fs.stat("/home/rafy/test_dir/test")  -> os.stat_result(st_mode=33204, st_ino=795348, st_dev=2049, st_nlink=1, st_uid=1000, st_gid=1000, st_size=0, st_atime=1586445434, st_mtime=1586445434, st_ctime=1586445434)
@@ -842,11 +890,11 @@ def stat(path: str):
     Returns:
         stat_result: returns stat struct.
     """
+    path=_str_to_path(path,needexist=True)
+    return path.stat()
 
-    return pathlib.Path(path).stat()
 
-
-def lstat(path: str):
+def lstat(path:Union[Path,str]):
     """Gets stat of path `path` (handles links)
     e.g
          j.sals.fs.lstat("/home/rafy/testing_link")  -> os.stat_result(st_mode=41471, st_ino=7081257, st_dev=2049, st_nlink=1, st_uid=1000, st_gid=1000, st_size=16, st_atime=1586445737, st_mtime=1586445734, st_ctime=1586445734)
@@ -857,11 +905,12 @@ def lstat(path: str):
     Returns:
         stat_result: returns stat struct.
     """
+    path=_str_to_path(path,needexist=True)
+    return path.lstat()
 
-    return pathlib.Path(path).lstat()
 
 
-def resolve(path: str) -> str:
+def resolve(path:Union[Path,str]) -> str:
     """resolve `.` and `..` in path
     e.g 
         j.sals.fs.resolve("")  -> PosixPath('/home/rafy/Documents')
@@ -873,21 +922,23 @@ def resolve(path: str) -> str:
     Returns:
         str: resolved path
     """
-    return pathlib.Path(path).resolve()
+    path=_str_to_path(path,needexist=True)
+    return path.resolve()
 
 
-def extension(path: str, include_dot=True):
+def extension(path:Union[Path,str], include_dot=False):
     """Gets the extension of path
     e.g
         '/home/ahmed/myfile.py' -> `.py` if include_dot else `py`
 
     Args:
         path (str): [description]
-        include_dot (bool, optional): controls whether to include the dot or not. Defaults to True.
+        include_dot (bool, optional): controls whether to include the dot or not. Defaults to False.
 
     Returns:
         str: extension
     """
+    path=_path_to_str(path,needexist=True)
     splitted = os.path.splitext(path)
     ext = ""
     if len(splitted) == 1:
@@ -903,23 +954,23 @@ ext = extension
 
 
 def chown():
-    raise NotImplementedError()
+    raise err.NotImplemented("TODO:")
 
 
 def read_link(path):
-    raise NotImplementedError()
+    raise err.NotImplemented("TODO:")
 
 
 def remove_links(path):
-    raise NotImplementedError()
+    raise err.NotImplemented("TODO:")
 
 
 def change_filenames(from_, to, where):
-    pass
+    raise err.NotImplemented("TODO:")
 
 
 def replace_words_in_files(from_, to, where):
-    pass
+    raise err.NotImplemented("TODO:")
 
 
 move = shutil.move
@@ -929,7 +980,7 @@ def default_filter_fun(entry):
     return True
 
 
-def walk(path: str, pat="*", filter_fun=default_filter_fun):
+def walk(path:Union[Path,str], pat="*", filter_fun=default_filter_fun):
     """walk recursively on path
     e.g
         for el in walk('/tmp', filter_fun=j.sals.fs.is_file) : ..
@@ -942,14 +993,14 @@ def walk(path: str, pat="*", filter_fun=default_filter_fun):
         pat (str, optional): pattern to match against. Defaults to "*".
         filter_fun (Function, optional): filtering function. Defaults to default_filter_fun which accepts anything.
     """
-    p = pathlib.Path(path)
-    for entry in p.rglob(pat):
+    path=_str_to_path(path,needexist=True)
+    for entry in path.rglob(pat):
         # use rglob instead of glob("**/*")
         if filter_fun(entry):
             yield str(entry)
 
 
-def walk_non_recursive(path: str, filter_fun=default_filter_fun):
+def walk_non_recursive(path:Union[Path,str], filter_fun=default_filter_fun):
     """walks non recursively on path
     e.g
         for el in walk('/tmp', filter=j.sals.fs.is_file) : ..
@@ -962,13 +1013,13 @@ def walk_non_recursive(path: str, filter_fun=default_filter_fun):
         pat (str, optional): pattern to match against. Defaults to "*".
         filter_fun (Function, optional): filtering function. Defaults to default_filter_fun which accepts anything.
     """
-    p = pathlib.Path(path)
-    for entry in p.iterdir():
+    path=_str_to_path(path,needexist=True)
+    for entry in path.iterdir():
         if filter_fun(entry):
             yield str(entry)
 
 
-def walk_files(path: str, recursive=True):
+def walk_files(path:Union[Path,str], recursive=True):
     """
     walk over files in path and applies function `fun`
     e.g
@@ -981,7 +1032,7 @@ def walk_files(path: str, recursive=True):
 
 
     """
-
+    path=_str_to_path(path,needexist=True)
     if recursive:
         return walk(path, filter_fun=is_file)
     else:
@@ -1002,6 +1053,7 @@ def walk_dirs(path, recursive=True):
 
 
     """
+    path=_str_to_path(path,needexist=True)
     if recursive:
         return walk(path, filter_fun=is_dir)
     else:

@@ -131,7 +131,7 @@ def ptconfig(repl):
     repl.wrap_lines = True
 
     # Mouse support.
-    repl.enable_mouse_support = False
+    repl.enable_mouse_support = True
 
     # Complete while typing. (Don't require tab before the
     # completion menu is shown.)
@@ -141,7 +141,7 @@ def ptconfig(repl):
     repl.vi_mode = False
 
     # Paste mode. (When True, don't insert whitespace after new line.)
-    repl.paste_mode = False
+    repl.paste_mode = True
 
     # Use the classic prompt. (Display '>>>' instead of 'In [1]'.)
     repl.prompt_style = "classic"  # 'classic' or 'ipython'

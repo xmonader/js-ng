@@ -46,7 +46,7 @@ def visualize(filename, host="127.0.0.1", port="8080"):
         Stats(filename)
     except Exception as e:
         print(f"{filename} is not a valid stats file")
-        raise  e
+        raise e
     try:
         conn = app.listen(port, address=host)
     except socket.error as e:

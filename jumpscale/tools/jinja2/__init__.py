@@ -1,4 +1,6 @@
 from jumpscale.god import j
+from pathlib import Path
+from typing import Union, Optional
 from jinja2 import (
     Environment,
     FileSystemLoader,
@@ -8,7 +10,7 @@ from jinja2 import (
 )
 
 
-def get_env(templates_path):
+def get_env(templates_path: Union[Path, str]):
     """get an environment from templates root path
 
     Args:
@@ -17,10 +19,12 @@ def get_env(templates_path):
     Returns:
         jinja2.Environment: Jinja2 env
     """
+    if isinstance(templates_path, Path):
+        templates_path = templates_path.as_posix()
     return Environment(loader=FileSystemLoader(templates_path), autoescape=select_autoescape(["html", "xml"]),)
 
 
-def get_template(template_path=None, template_text=None):
+def get_template(template_path: Union[None, Path, str] = None, template_text: Optional[str] = None):
     """returns jinja2 template
 
     Args:
@@ -34,6 +38,8 @@ def get_template(template_path=None, template_text=None):
     Returns:
         jinja2.Template: Jinja2 template
     """
+    if isinstance(template_path, Path):
+        template_path = template_path.as_posix()
 
     if template_path and template_text:
         raise j.exceptions.Input("Can only specify template_path or template_text")
@@ -46,13 +52,18 @@ def get_template(template_path=None, template_text=None):
     return Template(template_text, undefined=StrictUndefined)
 
 
-def render_template(template_path=None, template_text=None, dest=None, **kwargs):
+def render_template(
+    template_path: Union[None, Path, str] = None,
+    template_text: Optional[str] = None,
+    dest: Optional[Path] = None,
+    **kwargs,
+):
     """load the template if dest is specified will write in specified path, renders with specified kwargs
 
     Args:
-        template_path (str, optional): location of the template. Defaults to None.
+        template_path (Path, str, optional): location of the template. Defaults to None.
         template_text (str, optional): text of the template. Defaults to None.
-        dest (str, optional): path to write rendered template in. Defaults to None.
+        dest (Path, str, optional): path to write rendered template in. Defaults to None.
 
     Raises:
         j.exceptions.Base: If rendering failed
@@ -60,6 +71,9 @@ def render_template(template_path=None, template_text=None, dest=None, **kwargs)
     Returns:
         str: Rendered template
     """
+    if isinstance(template_path, Path):
+        template_path = template_path.as_posix()
+
     template = get_template(template_path=template_path, template_text=template_text)
 
     try:

@@ -81,7 +81,10 @@ import importlib
 import importlib.util
 from jumpscale.core.config import get_config
 import os
-import pkgutil
+from pathlib import Path
+
+# import pkgutil
+import inspect
 import sys
 import traceback
 from types import SimpleNamespace
@@ -170,6 +173,72 @@ class J:
         self.__loaded = False
         self.__loaded_simplenamespace = None
         self._load()
+
+    def _locals_get(self, locals_):
+        def add(locals_, name, obj):
+            if name not in locals_:
+                locals_[name] = obj
+            return locals_
+
+        # try:
+        #     locals_ = add(locals_, "ssh", j.clients.ssh)
+        # except:
+        #     pass
+        # try:
+        #     locals_ = add(locals_, "iyo", j.clients.itsyouonline)
+        # except:
+        #     pass
+
+        # locals_ = add(locals_,"zos",j.kosmos.zos)
+
+        return locals_
+
+    def shell(self, loc: bool = True, exit: bool = True, locals_=None, globals_=None):
+        from ptpython.repl import embed
+        from .shell.config import ptconfig
+        import sys
+
+        curframe = inspect.currentframe()
+        calframe = inspect.getouterframes(curframe, 2)
+        f = calframe[1]
+        if loc:
+            print("\n*** file: %s" % f.filename)
+            print("*** function: %s [linenr:%s]\n" % (f.function, f.lineno))
+
+        if not locals_:
+            locals_ = curframe.f_back.f_locals
+        locals_ = self._locals_get(locals_)
+        if not globals_:
+            globals_ = curframe.f_back.f_globals
+
+        p = Path(f'{os.environ["HOME"]}/.jsx_history')
+        if not p.exists():
+            p.write_text("")
+        history_filename = p.as_posix()
+
+        if exit:
+            sys.exit(embed(globals_, locals_, configure=ptconfig, history_filename=history_filename))
+        else:
+            embed(globals_, locals_, configure=ptconfig, history_filename=history_filename)
+
+    def debug(self):
+        import sys
+        import pudb
+        import threading
+        import bdb
+
+        dbg = pudb._get_debugger()
+
+        if isinstance(threading.current_thread(), threading._MainThread):
+            pudb.set_interrupt_handler()
+
+        try:
+            dbg.set_trace(sys._getframe().f_back, paused=True)
+        except bdb.BdbQuit as e:
+            # TODO: does not catch it?
+            sys.exit()
+
+        sys.exit()
 
     def _load(self):
         if not self.__loaded:
