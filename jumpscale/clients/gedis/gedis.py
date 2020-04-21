@@ -1,17 +1,14 @@
-import codecs
 import inspect
 import json
 import os
-import pickle
 import sys
-from functools import partial, update_wrapper
-from typing import List
+from functools import partial
 
 from jumpscale.clients.base import Client
 from jumpscale.core.base import fields
 from jumpscale.god import j
+from jumpscale.servers.gedis.server import GedisErrorTypes, deserialize, serialize
 from jumpscale.tools.codeloader import load_python_module
-from jumpscale.servers.gedis.server import GedisErrorTypes
 
 
 class ActorResult:
@@ -81,13 +78,14 @@ class GedisClient(Client):
     name = fields.String(default="local")
     hostname = fields.String(default="localhost")
     port = fields.Integer(default=16000)
+    raise_on_error = fields.Boolean(default=False)
 
     def __init__(self):
         super().__init__()
         self._redisclient = None
         self._loaded_actors = {}
-        self._loaded_modules = set()
-        self._actors_load()
+        self._loaded_modules = []
+        self._load_actors()
         self.actors = ActorsCollection(self._loaded_actors)
 
     @property
@@ -96,61 +94,59 @@ class GedisClient(Client):
             self._redisclient = j.clients.redis.get(name=f"gedis_{self.name}", hostname=self.hostname, port=self.port)
         return self._redisclient
 
-    def _module_load(self, path):
+    def _load_module(self, path):
         if path not in self._loaded_modules:
             load_python_module(path)
-            self._loaded_modules.add(path)
+            self._loaded_modules.append(path)
 
-    def _actors_load(self):
-        for actor_name in self.actors_list():
-            actor_info = self.actor_info(actor_name)
-            self._module_load(actor_info["path"])
+    def _load_actors(self):
+        for actor_name in self.list_actors():
+            actor_info = self._get_actor_info(actor_name)
+            self._load_module(actor_info["path"])
             self._loaded_actors[actor_name] = ActorProxy(actor_name, actor_info, self)
 
-    def actors_list(self) -> list:
-        """Lists actors
+    def _get_actor_info(self, actor_name):
+        return self.execute(actor_name, "info", die=True).result
+
+    def list_actors(self) -> list:
+        """List actors
         
         Returns:
-            list -- list of actors
+            list -- List of loaded actors
         """
-        return self._execute("core", "list_actors")["result"]
+        return self.execute("core", "list_actors", die=True).result
 
-    def actor_info(self, actor_name):
-        return self._execute(actor_name, "info")["result"]
+    def reload(self):
+        """Reload actors
+        """
+        self._load_actors()
 
-    def _execute(self, actor_name: str, actor_method: str, *args, die: bool = True, **kwargs) -> dict:
-        payload = json.dumps((args, kwargs), default=lambda o: o.to_dict())
+    def execute(self, actor_name: str, actor_method: str, *args, die: bool = False, **kwargs) -> ActorResult:
+        """Execute actor's method
+        
+        Arguments:
+            actor_name {str} -- actor name
+            actor_method {str} -- actor method
+        
+        Keyword Arguments:
+            die {bool} --  (default: {False})
+        
+        Raises:
+            RemoteException: Raises if the response is not succeeded
+        
+        Returns:
+            ActorResult -- request result
+        """
+        payload = json.dumps((args, kwargs), default=serialize)
         response = self.redis_client.execute_command(actor_name, actor_method, payload)
-        response = json.loads(response.decode())
+        response = json.loads(response, object_hook=deserialize)
 
-        if not response["success"] and die:
-            raise RemoteException(response["error"])
+        if not response["success"]:
+            if die or self.raise_on_error:
+                raise RemoteException(response["error"])
 
-        return response
-
-    def execute(self, actor_name: str, actor_method: str, *args, **kwargs) -> dict:
-        actor = self._loaded_actors.get(actor_name)
-        if not actor:
-            raise j.exceptions.NotFound(f"Actor {actor_name} is not loaded")
-
-        method = actor.actor_info["methods"].get(actor_method)
-        if not method:
-            raise j.exceptions.Value(f"Actor {actor_name} doesn't have method {actor_method}")
-
-        response = self._execute(actor_name, actor_method, *args, die=False, **kwargs)
-        result = response["result"]
-        result_type_name = method["result_type"]
-        return_type = actor.module.__dict__.get(result_type_name) or actor.module.__builtins__.get(result_type_name)
-
-        if return_type and not isinstance(result, return_type):
-            if hasattr(return_type, "from_dict"):
-                result_object = return_type()
-                result_object.from_dict(result)
-                result = result_object
-
-        response["result"] = result
-        if response["error_type"]:
             response["error_type"] = GedisErrorTypes(response["error_type"])
+
         return ActorResult(**response)
 
 

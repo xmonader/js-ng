@@ -26,9 +26,9 @@ pong no?
 "reemkhamis"
 ```
 """
-
 from jumpscale.core.base import StoredFactory
-from .server import GedisServer
 
 
-export_module_as = StoredFactory(GedisServer)
+def export_module_as():
+    from .server import GedisServer
+    return StoredFactory(GedisServer)

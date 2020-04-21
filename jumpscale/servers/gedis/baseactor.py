@@ -1,11 +1,35 @@
 import inspect
-import json
-import codecs
-import pickle
 import sys
 
 
+def actor_method(func):
+    def wrapper(*args, **kwargs):
+        signature = inspect.signature(func)
+        # verify args and kwargs types
+        bound = signature.bind(*args, **kwargs)
+        for name, value in bound.arguments.items():
+            annotation = signature.parameters[name].annotation
+            if annotation not in (None, inspect._empty) and not isinstance(value, annotation):
+                raise TypeError(
+                    f"parameter ({name}) supposed to be of type ({annotation.__name__}), but found ({type(value).__name__})"
+                )
+
+        # call method
+        result = func(*bound.args, **bound.kwargs)
+
+        # verify result type
+        if not isinstance(result, signature.return_annotation):
+            raise TypeError(
+                f"method is supposed to return ({signature.return_annotation}), but it returned ({type(result)})"
+            )
+
+        return result
+
+    return wrapper
+
+
 class BaseActor:
+    @actor_method
     def info(self) -> dict:
         info = {}
         info["module"] = self.__module__
@@ -20,7 +44,6 @@ class BaseActor:
             signature = inspect.signature(attr)
             info["methods"][name] = {}
             info["methods"][name]["args"] = []
-
 
             result_type = signature.return_annotation
             if result_type is inspect._empty:
@@ -37,13 +60,7 @@ class BaseActor:
 
         return info
 
-    @property
-    def __weakref__(self):
-        return self.__wrapped__.__weakref__
-
     def __validate_actor__(self):
-        TYPES = [str, int, float, list, tuple, dict, bool]
-
         def validate_annotation(annotation, annotated):
             if annotation is None or annotation is inspect._empty:
                 return
@@ -51,7 +68,7 @@ class BaseActor:
             if not (inspect.isclass(annotation) and annotation.__class__ == type):
                 raise ValueError("annotation must be a class type")
 
-            if annotation not in TYPES:
+            if annotation not in (str, int, float, list, tuple, dict, bool):
                 if annotation.__module__ == "builtins":
                     raise ValueError(f"unsupported type ({annotation.__name__})")
 

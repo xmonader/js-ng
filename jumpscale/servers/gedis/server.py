@@ -1,15 +1,15 @@
 import inspect
 import json
 import sys
+import os
 from enum import Enum
 from functools import partial
 from io import BytesIO
 from signal import SIGKILL, SIGTERM
-
+import json
 import better_exceptions
 import gevent
 from gevent import time
-from gevent.pool import Pool
 from gevent.server import StreamServer
 from jumpscale.core.base import Base, fields
 from jumpscale.god import j
@@ -19,6 +19,21 @@ from redis.exceptions import ConnectionError
 from .baseactor import BaseActor
 from .systemactor import CoreActor, SystemActor
 
+
+def serialize(obj):
+    if not isinstance(obj, (str, int, float, list, tuple, dict, bool)):
+        module = os.path.dirname(inspect.getmodule(obj).__file__)
+        return dict(__serialized__=True, module=module, type=obj.__class__.__name__, data=obj.to_dict())
+    return obj
+
+def deserialize(obj):
+    if isinstance(obj, dict) and obj.get("__serialized__"):
+        module = sys.modules[obj["module"]]
+        object_instance = getattr(module, obj["type"])()
+        object_instance.from_dict(obj["data"])
+        return object_instance
+    return obj
+    
 
 class GedisErrorTypes(Enum):
     NOT_FOUND = 0
@@ -115,7 +130,7 @@ class GedisServer(Base):
     host = fields.String(default="127.0.0.1")
     port = fields.Integer(default=16000)
     enable_system_actor = fields.Boolean(default=True)
-    _actors = fields.Typed(dict, default={})
+    _actors = fields.Typed(dict)
 
     def __init__(self):
         super().__init__()
@@ -144,10 +159,10 @@ class GedisServer(Base):
             j.exceptions.Value: raises if actor name is not a valid identifier
         """
         if actor_name in RESERVED_ACTOR_NAMES:
-            raise j.exceptions.Value("Actor name should be in {}".format(",".join(RESERVED_ACTOR_NAMES)))
+            raise j.exceptions.Value("Invalid actor name")
 
         if not actor_name.isidentifier():
-            raise j.exceptions.Value("Actor name should be a valid identifier")
+            raise j.exceptions.Value(f"Actor name should be a valid identifier")
 
         self._actors[actor_name] = actor_path
 
@@ -193,54 +208,13 @@ class GedisServer(Base):
     def _unregister_actor(self, actor_name: str):
         self._loaded_actors.pop(actor_name, None)
 
-    def _validate_method_arguments(self, method, args, kwargs):
-        signature = inspect.signature(method)
-        try:
-            bound = signature.bind(*args, **kwargs)
-        except TypeError as e:
-            raise j.exceptions.Validation(e)
-
-        for name, val in bound.arguments.items():
-            annotation = signature.parameters[name].annotation
-            if not isinstance(val, annotation):
-                if hasattr(annotation, "from_dict"):
-                    argument_object = annotation()
-                    argument_object.from_dict(val)  
-                    bound.arguments[name] = argument_object
-                else:
-                    raise j.exceptions.Validation(
-                       f"parameter ({name}) supposed to be of type ({annotation}), but found ({type(val)})"
-                    )
-
-        return_type = signature.return_annotation
-        if return_type in (None, inspect._empty):
-            return_type = type(None)
-
-        return bound.args, bound.kwargs, return_type
-
     def _exceute(self, actor_name, method_name, args, kwargs):
         result = error = error_type = None
         actor = self._loaded_actors[actor_name]
-        method = getattr(actor, method_name)
         try:
-            args, kwargs, return_type = self._validate_method_arguments(method, args, kwargs)
-            result = method(*args, **kwargs)
+            result = getattr(actor, method_name)(*args, **kwargs)
 
-            if isinstance(result, return_type):
-                if return_type not in SERIALIZABLE_TYPES:
-                    if hasattr(result, "to_dict"):
-                        result = result.to_dict()
-                    else:
-                        j.exceptions.Value("Failed to serialize response result")
-            else:
-                message = f"method {actor_name}:{method_name} is supposed to return ({return_type}), but it returned ({type(result)})"
-                if isinstance(result, SERIALIZABLE_TYPES):
-                    j.logger.warning(message)
-                else:
-                    result = None
-                    raise j.exceptions.Value(message)
-
-        except j.exceptions.Validation as e:
+        except TypeError as e:
             error = str(e)
             error_type = GedisErrorTypes.BAD_REQUEST.value
 
@@ -271,12 +245,6 @@ class GedisServer(Base):
                         actor_name = response.pop(0).decode()
                         method_name = response.pop(0).decode()
 
-                        if response:
-                            args, kwargs = json.loads(response.pop(0))
-
-                        args = args or ()
-                        kwargs = kwargs or {}
-
                         if actor_name not in self._loaded_actors:
                             output["error"] = "actor not found"
                             output["error_type"] = GedisErrorTypes.ACTOR_ERROR.value
@@ -285,8 +253,12 @@ class GedisServer(Base):
                             j.logger.info(
                                 "Executing method {} from actor {} to client {}", method_name, actor_name, address
                             )
+
+                            if response:
+                                args, kwargs = json.loads(response.pop(0), object_hook=deserialize)
+
                             output["result"], output["error"], output["error_type"] = self._exceute(
-                                actor_name, method_name, args, kwargs
+                                actor_name, method_name, args or (), kwargs or {}
                             )
 
                 except ConnectionError:
@@ -298,7 +270,7 @@ class GedisServer(Base):
                     output["error_type"] = GedisErrorTypes.INTERNAL_SERVER_ERROR.value
 
                 output["success"] = output["error"] is None
-                encoder.encode(json.dumps(output))
+                encoder.encode(json.dumps(output, default=serialize))
 
             parser.on_disconnect()
 

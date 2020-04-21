@@ -3,7 +3,7 @@ import sys
 import json
 import inspect
 from jumpscale.god import j
-from jumpscale.servers.gedis.baseactor import BaseActor
+from jumpscale.servers.gedis.baseactor import BaseActor, actor_method
 
 
 class CoreActor(BaseActor):
@@ -23,6 +23,7 @@ class SystemActor(BaseActor):
     def __init__(self, server):
         self.server = server
 
+    @actor_method
     def register_actor(self, actor_name: str, actor_path: str) -> bool:
         """Register new actor
         
@@ -45,6 +46,7 @@ class SystemActor(BaseActor):
         self.server._register_actor(actor_name, actor)
         return True
 
+    @actor_method
     def unregister_actor(self, actor_name: str) -> bool:
         """Register actor
         

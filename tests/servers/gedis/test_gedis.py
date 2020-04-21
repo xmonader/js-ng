@@ -19,12 +19,15 @@ class TestGedis(unittest.TestCase):
         server = j.servers.gedis.get("test")
         gevent.spawn(server.start)
 
+        import time
+        time.sleep(3)
+
         cl = j.clients.gedis.get("test")
-        cl.register_actor('memory', j.sals.fs.join_paths(j.sals.fs.parent(__file__), 'memory_profiler.py'))
+        cl.actors.system.register_actor('memory', j.sals.fs.join_paths(j.sals.fs.parent(__file__), 'memory_profiler.py'))
         
         def register(i):
             j.logger.info('Registering actor test_{}', i)
-            cl.register_actor('test_%s' % i, ACTOR_PATH)
+            cl.actors.system.register_actor('test_%s' % i, ACTOR_PATH)
 
         def execute(i):
             j.logger.info('executing actor no {}', i)

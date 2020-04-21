@@ -1,9 +1,9 @@
-from jumpscale.servers.gedis.baseactor import BaseActor
+from jumpscale.servers.gedis.baseactor import BaseActor, actor_method
 from objgraph import count, show_most_common_types
 
 
 class MemoryProfiler(BaseActor):
-
+    @actor_method
     def object_count(self, object_type: str) -> int:
         """Gets number of object with type object_type in memory
         
@@ -15,6 +15,7 @@ class MemoryProfiler(BaseActor):
         """
         return count(object_type)
     
+    @actor_method
     def print_top_types(self, limit: int) -> None:
         """Print top x object in memory
         
